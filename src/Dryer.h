@@ -60,7 +60,7 @@ private:
     std::vector<StatsUpdateCallback> statsUpdateCallbacks;
 
     // State transition
-    void transitionToState(DryerState newState) {
+    void transitionToState(DryerState newState, uint32_t currentMillis) {
         if (currentState == newState) return;
 
         previousState = currentState;
@@ -74,10 +74,10 @@ private:
         }
 
         // Handle state entry actions
-        onStateEnter(newState);
+        onStateEnter(newState, currentMillis);
     }
 
-    void onStateEnter(DryerState state) {
+    void onStateEnter(DryerState state, uint32_t currentMillis) {
         switch (state) {
             case DryerState::READY:
                 heaterControl->stop();
@@ -86,13 +86,13 @@ private:
 
             case DryerState::RUNNING:
                 heaterControl->start();
-                startTime = millis();
+                startTime = currentMillis;
                 totalPausedDuration = 0;
                 break;
 
             case DryerState::PAUSED:
                 heaterControl->stop();
-                pausedTime = millis();
+                pausedTime = currentMillis;
                 break;
 
             case DryerState::FINISHED:
@@ -168,7 +168,9 @@ private:
     }
 
     void onEmergencyStop(const String& reason) {
-        transitionToState(DryerState::FAILED);
+        // Get current time from last update call
+        // In emergency, we don't have currentMillis, but state transition will handle cleanup
+        transitionToState(DryerState::FAILED, lastStateSaveTime);
         storage->saveEmergencyState(reason);
     }
 
@@ -207,7 +209,7 @@ private:
         if (currentMillis - lastStateSaveTime >= STATE_SAVE_INTERVAL) {
             lastStateSaveTime = currentMillis;
 
-            uint32_t elapsed = getElapsedTime();
+            uint32_t elapsed = getElapsedTime(currentMillis);
             storage->saveRuntimeState(
                 currentState,
                 elapsed,
@@ -219,13 +221,40 @@ private:
         }
     }
 
-    void notifyStatsUpdate() {
-        CurrentStats stats = getCurrentStats();
+    void notifyStatsUpdate(uint32_t currentMillis) {
+        CurrentStats stats = getCurrentStats(currentMillis);
         for (auto& callback : statsUpdateCallbacks) {
             if (callback) {
                 callback(stats);
             }
         }
+    }
+
+    /**
+    * Calculate elapsed time in seconds since start, accounting for pauses
+    */
+    uint32_t getElapsedTime(uint32_t currentMillis) const {
+        if (currentState == DryerState::RUNNING) {
+            return ((currentMillis - startTime) - totalPausedDuration)/1000;
+        } else if (currentState == DryerState::PAUSED) {
+            return ((pausedTime - startTime) - totalPausedDuration)/1000;
+        }
+        return 0;
+    }
+
+    CurrentStats getCurrentStats(uint32_t currentMillis) const {
+        CurrentStats stats;
+        stats.state = currentState;
+        stats.currentTemp = currentHeaterTemp;
+        stats.targetTemp = targetTemp;
+        stats.boxTemp = currentBoxTemp;
+        stats.boxHumidity = currentBoxHumidity;
+        stats.elapsedTime = getElapsedTime(currentMillis);
+        stats.remainingTime = (targetTime > stats.elapsedTime) ?
+                              (targetTime - stats.elapsedTime) : 0;
+        stats.pwmOutput = currentPWM;
+        stats.activePreset = activePreset;
+        return stats;
     }
 
 public:
@@ -287,7 +316,7 @@ public:
         if (storage->hasValidRuntimeState()) {
             // Load runtime state
             // Transition to POWER_RECOVERED
-            transitionToState(DryerState::POWER_RECOVERED);
+            transitionToState(DryerState::POWER_RECOVERED, 0);
         } else {
             // Normal startup
             loadPreset(activePreset);
@@ -303,9 +332,9 @@ public:
         // State-specific updates
         if (currentState == DryerState::RUNNING) {
             // Check if target time reached
-            uint32_t elapsed = getElapsedTime();
+            uint32_t elapsed = getElapsedTime(currentMillis);
             if (elapsed >= targetTime) {
-                transitionToState(DryerState::FINISHED);
+                transitionToState(DryerState::FINISHED, currentMillis);
             }
 
             // Persist state periodically
@@ -313,13 +342,13 @@ public:
         }
 
         // Notify stats update (for display)
-        notifyStatsUpdate();
+        notifyStatsUpdate(currentMillis);
     }
 
     void start() override {
         if (currentState == DryerState::READY ||
             currentState == DryerState::POWER_RECOVERED) {
-            transitionToState(DryerState::RUNNING);
+            transitionToState(DryerState::RUNNING, lastStateSaveTime);
             if (soundEnabled && soundController) {
                 soundController->playStart();
             }
@@ -328,19 +357,19 @@ public:
 
     void pause() override {
         if (currentState == DryerState::RUNNING) {
-            transitionToState(DryerState::PAUSED);
+            transitionToState(DryerState::PAUSED, lastStateSaveTime);
         }
     }
 
     void resume() override {
         if (currentState == DryerState::PAUSED) {
-            totalPausedDuration += (millis() - pausedTime);
-            transitionToState(DryerState::RUNNING);
+            totalPausedDuration += (lastStateSaveTime - pausedTime);
+            transitionToState(DryerState::RUNNING, lastStateSaveTime);
         }
     }
 
     void reset() override {
-        transitionToState(DryerState::READY);
+        transitionToState(DryerState::READY, lastStateSaveTime);
         startTime = 0;
         pausedTime = 0;
         totalPausedDuration = 0;
@@ -350,7 +379,7 @@ public:
     void stop() override {
         if (currentState == DryerState::RUNNING ||
             currentState == DryerState::PAUSED) {
-            transitionToState(DryerState::READY);
+            transitionToState(DryerState::READY, lastStateSaveTime);
         }
     }
 
@@ -407,18 +436,7 @@ public:
     }
 
     CurrentStats getCurrentStats() const override {
-        CurrentStats stats;
-        stats.state = currentState;
-        stats.currentTemp = currentHeaterTemp;
-        stats.targetTemp = targetTemp;
-        stats.boxTemp = currentBoxTemp;
-        stats.boxHumidity = currentBoxHumidity;
-        stats.elapsedTime = getElapsedTime();
-        stats.remainingTime = (targetTime > stats.elapsedTime) ?
-                              (targetTime - stats.elapsedTime) : 0;
-        stats.pwmOutput = currentPWM;
-        stats.activePreset = activePreset;
-        return stats;
+        return getCurrentStats(lastStateSaveTime);
     }
 
     PresetType getActivePreset() const override {
@@ -447,16 +465,6 @@ public:
 
     void registerStatsUpdateCallback(StatsUpdateCallback callback) override {
         statsUpdateCallbacks.push_back(callback);
-    }
-
-private:
-    uint32_t getElapsedTime() const {
-        if (currentState == DryerState::RUNNING) {
-            return (millis() - startTime) - totalPausedDuration;
-        } else if (currentState == DryerState::PAUSED) {
-            return (pausedTime - startTime) - totalPausedDuration;
-        }
-        return 0;
     }
 };
 
