@@ -255,7 +255,7 @@ void test_dryer_finishes_when_target_time_reached() {
     dryer->start();
 
     // Simulate 14400 seconds (just enough to finish)
-    dryer->update(1441000);
+    dryer->update(14401000);
 
     TEST_ASSERT_EQUAL(DryerState::FINISHED, dryer->getState());
 }
@@ -288,12 +288,11 @@ void test_dryer_provides_current_stats() {
     dryer->begin();
     dryer->selectPreset(PresetType::PLA);
 
-    sensors->setHeaterTemp(65.5, 1000);
-    sensors->setBoxTemp(48.2, 1000);
-    sensors->setBoxHumidity(35.0, 1000);
-
     dryer->start();
     dryer->update(1000);
+
+    sensors->triggerHeaterTempUpdate(65.5, 1000);
+    sensors->triggerBoxDataUpdate(48.2, 35.0, 1000);
 
     CurrentStats stats = dryer->getCurrentStats();
 
@@ -314,7 +313,7 @@ void test_dryer_calculates_elapsed_time() {
     dryer->update(10000);
 
     CurrentStats stats = dryer->getCurrentStats();
-    TEST_ASSERT_TRUE(stats.elapsedTime >= 9000 && stats.elapsedTime <= 11000);
+    TEST_ASSERT_TRUE(stats.elapsedTime >= 9 && stats.elapsedTime <= 11);
 }
 
 void test_dryer_calculates_remaining_time() {
@@ -506,7 +505,7 @@ void test_dryer_pause_and_resume_cycle() {
     // Run for 5 seconds
     dryer->update(5000);
     CurrentStats stats1 = dryer->getCurrentStats();
-    uint32_t elapsed1 = stats1.elapsedTime;
+    uint32_t elapsed1 = stats1.elapsedTime; // 5
 
     // Pause
     dryer->pause();
@@ -514,22 +513,24 @@ void test_dryer_pause_and_resume_cycle() {
 
     // Wait 3 seconds (time should not advance)
     dryer->update(8000);
-    CurrentStats stats2 = dryer->getCurrentStats();
+    CurrentStats stats2 = dryer->getCurrentStats(); // 5
+    uint32_t elapsed2 = stats2.elapsedTime; // Should still be 5
 
     // Elapsed time should be about the same
-    TEST_ASSERT_TRUE(stats2.elapsedTime >= elapsed1 - 100 &&
-                     stats2.elapsedTime <= elapsed1 + 100);
+    TEST_ASSERT_TRUE(elapsed2 >= elapsed1 - 1 && elapsed2 <= elapsed1 + 1);
 
     // Resume
     dryer->resume();
+
     TEST_ASSERT_EQUAL(DryerState::RUNNING, dryer->getState());
 
     // Run for another 2 seconds
     dryer->update(10000);
-    CurrentStats stats3 = dryer->getCurrentStats();
+    CurrentStats stats3 = dryer->getCurrentStats(); // 7
+    uint32_t elapsed3 = stats3.elapsedTime; // Should be about 7
 
     // Total elapsed should be about 7 seconds (5 + 2, excluding pause)
-    TEST_ASSERT_TRUE(stats3.elapsedTime >= 6500 && stats3.elapsedTime <= 7500);
+    TEST_ASSERT_TRUE(elapsed3 >= elapsed1+2-1 && elapsed3 <= elapsed1+2+1);
 }
 
 // ==================== Main Test Runner ====================

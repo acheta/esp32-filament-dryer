@@ -42,7 +42,7 @@ private:
     uint32_t startTime;
     uint32_t pausedTime;
     uint32_t totalPausedDuration;
-    uint32_t targetTime;
+    uint32_t targetTimeSeconds;
     float targetTemp;
     float maxAllowedTemp;
 
@@ -54,6 +54,7 @@ private:
 
     // Timing
     uint32_t lastStateSaveTime;
+    uint32_t currentTime;  // Updated every update() call
 
     // Callbacks
     std::vector<StateChangeCallback> stateChangeCallbacks;
@@ -74,11 +75,11 @@ private:
         }
 
         // Handle state entry actions
-        onStateEnter(newState, currentMillis);
+        onStateEnter(newState, previousState, currentMillis);
     }
 
-    void onStateEnter(DryerState state, uint32_t currentMillis) {
-        switch (state) {
+    void onStateEnter(DryerState newState, DryerState prevState, uint32_t currentMillis) {
+        switch (newState) {
             case DryerState::READY:
                 heaterControl->stop();
                 pidController->reset();
@@ -86,8 +87,14 @@ private:
 
             case DryerState::RUNNING:
                 heaterControl->start();
-                startTime = currentMillis;
-                totalPausedDuration = 0;
+                if (prevState == DryerState::READY) {
+                    // Fresh start
+                    startTime = currentMillis;
+                    totalPausedDuration = 0;
+                } else if (prevState == DryerState::PAUSED) {
+                    // Resuming from pause
+                    totalPausedDuration += (currentMillis - pausedTime);
+                }
                 break;
 
             case DryerState::PAUSED:
@@ -168,9 +175,8 @@ private:
     }
 
     void onEmergencyStop(const String& reason) {
-        // Get current time from last update call
-        // In emergency, we don't have currentMillis, but state transition will handle cleanup
-        transitionToState(DryerState::FAILED, lastStateSaveTime);
+        // Emergency uses currentTime since it's triggered during update loop
+        transitionToState(DryerState::FAILED, currentTime);
         storage->saveEmergencyState(reason);
     }
 
@@ -178,19 +184,19 @@ private:
         switch (preset) {
             case PresetType::PLA:
                 targetTemp = PRESET_PLA_TEMP;
-                targetTime = PRESET_PLA_TIME;
+                targetTimeSeconds = PRESET_PLA_TIME;
                 maxAllowedTemp = targetTemp + PRESET_PLA_OVERSHOOT;
                 break;
 
             case PresetType::PETG:
                 targetTemp = PRESET_PETG_TEMP;
-                targetTime = PRESET_PETG_TIME;
+                targetTimeSeconds = PRESET_PETG_TIME;
                 maxAllowedTemp = targetTemp + PRESET_PETG_OVERSHOOT;
                 break;
 
             case PresetType::CUSTOM:
                 targetTemp = customPreset.targetTemp;
-                targetTime = customPreset.targetTime;
+                targetTimeSeconds = customPreset.targetTime;
                 maxAllowedTemp = targetTemp + customPreset.maxOvershoot;
                 break;
         }
@@ -214,7 +220,7 @@ private:
                 currentState,
                 elapsed,
                 targetTemp,
-                targetTime,
+                targetTimeSeconds,
                 activePreset,
                 currentMillis
             );
@@ -230,9 +236,7 @@ private:
         }
     }
 
-    /**
-    * Calculate elapsed time in seconds since start, accounting for pauses
-    */
+    /** Calculate elapsed time in seconds */
     uint32_t getElapsedTime(uint32_t currentMillis) const {
         if (currentState == DryerState::RUNNING) {
             return ((currentMillis - startTime) - totalPausedDuration)/1000;
@@ -250,8 +254,8 @@ private:
         stats.boxTemp = currentBoxTemp;
         stats.boxHumidity = currentBoxHumidity;
         stats.elapsedTime = getElapsedTime(currentMillis);
-        stats.remainingTime = (targetTime > stats.elapsedTime) ?
-                              (targetTime - stats.elapsedTime) : 0;
+        stats.remainingTime = (targetTimeSeconds > stats.elapsedTime) ?
+                              (targetTimeSeconds - stats.elapsedTime) : 0;
         stats.pwmOutput = currentPWM;
         stats.activePreset = activePreset;
         return stats;
@@ -278,14 +282,15 @@ public:
           startTime(0),
           pausedTime(0),
           totalPausedDuration(0),
-          targetTime(PRESET_PLA_TIME),
+          targetTimeSeconds(PRESET_PLA_TIME),
           targetTemp(PRESET_PLA_TEMP),
           maxAllowedTemp(PRESET_PLA_TEMP + PRESET_PLA_OVERSHOOT),
           currentHeaterTemp(0),
           currentBoxTemp(0),
           currentBoxHumidity(0),
           currentPWM(0),
-          lastStateSaveTime(0) {
+          lastStateSaveTime(0),
+          currentTime(0) {
 
         // Initialize custom preset with defaults
         customPreset.targetTemp = PRESET_CUSTOM_TEMP;
@@ -325,6 +330,9 @@ public:
     }
 
     void update(uint32_t currentMillis) override {
+        // Store current time for use in user-triggered actions
+        currentTime = currentMillis;
+
         // Update all components
         sensorManager->update(currentMillis);
         safetyMonitor->update(currentMillis);
@@ -333,7 +341,7 @@ public:
         if (currentState == DryerState::RUNNING) {
             // Check if target time reached
             uint32_t elapsed = getElapsedTime(currentMillis);
-            if (elapsed >= targetTime) {
+            if (elapsed >= targetTimeSeconds) {
                 transitionToState(DryerState::FINISHED, currentMillis);
             }
 
@@ -348,7 +356,7 @@ public:
     void start() override {
         if (currentState == DryerState::READY ||
             currentState == DryerState::POWER_RECOVERED) {
-            transitionToState(DryerState::RUNNING, lastStateSaveTime);
+            transitionToState(DryerState::RUNNING, currentTime);
             if (soundEnabled && soundController) {
                 soundController->playStart();
             }
@@ -357,19 +365,18 @@ public:
 
     void pause() override {
         if (currentState == DryerState::RUNNING) {
-            transitionToState(DryerState::PAUSED, lastStateSaveTime);
+            transitionToState(DryerState::PAUSED, currentTime);
         }
     }
 
     void resume() override {
         if (currentState == DryerState::PAUSED) {
-            totalPausedDuration += (lastStateSaveTime - pausedTime);
-            transitionToState(DryerState::RUNNING, lastStateSaveTime);
+            transitionToState(DryerState::RUNNING, currentTime);
         }
     }
 
     void reset() override {
-        transitionToState(DryerState::READY, lastStateSaveTime);
+        transitionToState(DryerState::READY, currentTime);
         startTime = 0;
         pausedTime = 0;
         totalPausedDuration = 0;
@@ -379,7 +386,7 @@ public:
     void stop() override {
         if (currentState == DryerState::RUNNING ||
             currentState == DryerState::PAUSED) {
-            transitionToState(DryerState::READY, lastStateSaveTime);
+            transitionToState(DryerState::READY, currentTime);
         }
     }
 
@@ -436,7 +443,7 @@ public:
     }
 
     CurrentStats getCurrentStats() const override {
-        return getCurrentStats(lastStateSaveTime);
+        return getCurrentStats(currentTime);
     }
 
     PresetType getActivePreset() const override {

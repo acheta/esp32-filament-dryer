@@ -39,7 +39,7 @@
 constexpr uint32_t HEATER_TEMP_INTERVAL = 500;
 constexpr uint32_t BOX_DATA_INTERVAL = 2000;
 constexpr uint32_t PID_UPDATE_INTERVAL = 500;
-constexpr uint32_t STATE_SAVE_INTERVAL = 1000;
+constexpr uint32_t STATE_SAVE_INTERVAL = 60000; // Save every 60 seconds
 constexpr uint32_t DISPLAY_UPDATE_INTERVAL = 200;
 constexpr uint32_t SENSOR_TIMEOUT = 5000;
 
@@ -85,7 +85,7 @@ constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;    // Start scaling within 5°C 
 
 // PLA preset
 constexpr float PRESET_PLA_TEMP = 50.0;
-constexpr uint32_t PRESET_PLA_TIME = 14400;  // 4 hours
+constexpr uint32_t PRESET_PLA_TIME = 14400;  // seconds = 4 hours
 constexpr float PRESET_PLA_OVERSHOOT = 10.0;
 
 // PETG preset
