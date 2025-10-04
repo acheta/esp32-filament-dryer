@@ -30,6 +30,30 @@
 #include "userInterface/OLEDDisplay.h"
 #include "Dryer.h"
 
+// Mock storage for now (until LittleFS implementation is complete)
+#ifdef UNIT_TEST
+    #include "test/mocks/MockSettingsStorage.h"
+#else
+    // Temporary mock for ESP32 until SettingsStorage is implemented
+    class MockSettingsStorage : public ISettingsStorage {
+    public:
+        void begin() override {}
+        void loadSettings() override {}
+        void saveSettings() override {}
+        void saveCustomPreset(const DryingPreset& preset) override {}
+        DryingPreset loadCustomPreset() override { return DryingPreset(); }
+        void saveSoundEnabled(bool enabled) override {}
+        bool loadSoundEnabled() override { return true; }
+        void saveRuntimeState(DryerState state, uint32_t elapsed,
+                             float targetTemp, uint32_t targetTime,
+                             PresetType preset, uint32_t timestamp) override {}
+        bool hasValidRuntimeState() override { return false; }
+        void loadRuntimeState() override {}
+        void clearRuntimeState() override {}
+        void saveEmergencyState(const String& reason) override {}
+    };
+#endif
+
 // Global component pointers
 IHeaterTempSensor* heaterSensor = nullptr;
 IBoxTempHumiditySensor* boxSensor = nullptr;
@@ -38,6 +62,7 @@ IDisplay* oledDisplay = nullptr;
 IHeaterControl* heaterControl = nullptr;
 IPIDController* pidController = nullptr;
 ISafetyMonitor* safetyMonitor = nullptr;
+ISettingsStorage* settingsStorage = nullptr;
 ISoundController* soundController = nullptr;
 IDryer* dryer = nullptr;
 
@@ -46,6 +71,10 @@ uint32_t lastDisplayUpdate = 0;
 
 /**
  * Enhanced display showing both sensor data and dryer status
+ * Display: 128x32 pixels
+ * Line 1 (0-15px): State + Large Heater Temp
+ * Line 2 (16-23px): Timer OR Box data
+ * Line 3 (24-31px): Box data (when running)
  */
 void updateDisplay() {
     oledDisplay->clear();
@@ -60,64 +89,58 @@ void updateDisplay() {
     // Get dryer stats
     CurrentStats stats = dryer->getCurrentStats();
 
-    // Line 1: State and heater temp
+    // ==================== Line 1: State + Heater Temp (Large) ====================
     oledDisplay->setCursor(0, 0);
     oledDisplay->setTextSize(1);
 
-    // Show state
+    // Show state (3 chars)
     switch(stats.state) {
         case DryerState::READY:
-            oledDisplay->print("RDY ");
+            oledDisplay->print("RDY");
             break;
         case DryerState::RUNNING:
-            oledDisplay->print("RUN ");
+            oledDisplay->print("RUN");
             break;
         case DryerState::PAUSED:
-            oledDisplay->print("PAU ");
+            oledDisplay->print("PAU");
             break;
         case DryerState::FINISHED:
-            oledDisplay->print("FIN ");
+            oledDisplay->print("FIN");
             break;
         case DryerState::FAILED:
-            oledDisplay->print("ERR ");
+            oledDisplay->print("ERR");
             break;
         case DryerState::POWER_RECOVERED:
-            oledDisplay->print("PWR ");
+            oledDisplay->print("PWR");
             break;
     }
 
-    // Heater temp
+    // Heater temp - LARGE
+    oledDisplay->setTextSize(2);
+    oledDisplay->setCursor(24, 0);
+
     if (heaterValid) {
-        oledDisplay->print("H:");
-        oledDisplay->print(String(heaterTemp, 1));
-        oledDisplay->print("C");
-    } else {
-        oledDisplay->print("H:--");
-    }
-
-    // Target temp (if running)
-    if (stats.state == DryerState::RUNNING || stats.state == DryerState::PAUSED) {
-        oledDisplay->print("/");
-        oledDisplay->print(String(stats.targetTemp, 0));
-    }
-
-    // Line 2: Box temp and humidity
-    oledDisplay->setCursor(0, 12);
-    oledDisplay->print("Box:");
-    if (boxValid) {
-        oledDisplay->print(String(boxTemp, 1));
-        oledDisplay->print("C ");
-        oledDisplay->print(String(boxHumidity, 0));
-        oledDisplay->print("%");
+        oledDisplay->print(String(heaterTemp, 2));
+        oledDisplay->print("");
     } else {
         oledDisplay->print("--");
     }
 
-    // Line 3: Timer (if running or paused)
+    // Target temp (if running/paused)
     if (stats.state == DryerState::RUNNING || stats.state == DryerState::PAUSED) {
-        oledDisplay->setCursor(0, 24);
+        oledDisplay->setTextSize(1);
+        oledDisplay->setCursor(90, 0);
+        oledDisplay->print("/");
+        oledDisplay->print(String(stats.targetTemp, 0));
+        oledDisplay->print("C");
+    }
 
-        // Elapsed time
+    // ==================== Line 2: Box Data OR Timer ====================
+    oledDisplay->setTextSize(1);
+    oledDisplay->setCursor(0, 16);
+
+    if (stats.state == DryerState::RUNNING || stats.state == DryerState::PAUSED) {
+        // Show timer
         uint32_t elapsedMin = stats.elapsedTime / 60;
         uint32_t elapsedSec = stats.elapsedTime % 60;
         oledDisplay->print(String(elapsedMin));
@@ -125,15 +148,38 @@ void updateDisplay() {
         if (elapsedSec < 10) oledDisplay->print("0");
         oledDisplay->print(String(elapsedSec));
 
-        // Remaining time
-        oledDisplay->print("/");
+        oledDisplay->print(" /");
         uint32_t remainMin = stats.remainingTime / 60;
         oledDisplay->print(String(remainMin));
         oledDisplay->print("m");
 
-        // PWM output
-        oledDisplay->print(" ");
+        // PWM
+        oledDisplay->print(" P:");
         oledDisplay->print(String((int)stats.pwmOutput));
+    } else {
+        // Show box data when not running
+        oledDisplay->print("Box:");
+        if (boxValid) {
+            oledDisplay->print(String(boxTemp, 1));
+            oledDisplay->print("C ");
+            oledDisplay->print(String(boxHumidity, 0));
+            oledDisplay->print("%");
+        } else {
+            oledDisplay->print("--");
+        }
+    }
+
+    // ==================== Line 3: Box data when running (smaller) ====================
+    if (stats.state == DryerState::RUNNING || stats.state == DryerState::PAUSED) {
+        oledDisplay->setCursor(0, 24);
+        oledDisplay->setTextSize(1);
+        if (boxValid) {
+            oledDisplay->print("B:");
+            oledDisplay->print(String(boxTemp, 0));
+            oledDisplay->print("C ");
+            oledDisplay->print(String(boxHumidity, 0));
+            oledDisplay->print("%");
+        }
     }
 
     oledDisplay->display();
@@ -164,7 +210,7 @@ void setup() {
     // ==================== Create Display ====================
     Serial.println("\nCreating display...");
 
-    oledDisplay = new OLEDDisplay(128, 64, 0x3C);
+    oledDisplay = new OLEDDisplay(128, 32, 0x3C);
     Serial.println("  - OLED Display created");
 
     // ==================== Create Control Components ====================
@@ -179,10 +225,13 @@ void setup() {
     safetyMonitor = new SafetyMonitor();
     Serial.println("  - SafetyMonitor created");
 
-    // ==================== Create Placeholder Components ====================
-    Serial.println("\nCreating placeholder components...");
+    // ==================== Create Storage & Sound Components ====================
+    Serial.println("\nCreating storage and sound components...");
 
-    soundController = nullptr; // Will use nullptr for now
+    settingsStorage = new MockSettingsStorage();
+    Serial.println("  - SettingsStorage (mock) created");
+
+    soundController = nullptr; // Not implemented yet
     Serial.println("  - Sound controller placeholder set");
 
     // ==================== Create Dryer Orchestrator ====================
@@ -193,7 +242,7 @@ void setup() {
         heaterControl,
         pidController,
         safetyMonitor,
-        nullptr,  // settingsStorage - not implemented yet
+        settingsStorage,
         soundController
     );
     Serial.println("  - Dryer created");
@@ -217,6 +266,9 @@ void setup() {
 
     safetyMonitor->begin();
     Serial.println("  ✓ SafetyMonitor initialized");
+
+    settingsStorage->begin();
+    Serial.println("  ✓ SettingsStorage initialized");
 
     // Initialize dryer (sets up callbacks, loads settings, etc.)
     dryer->begin();
