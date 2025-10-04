@@ -11,7 +11,7 @@
 // ==================== Hardware Pins ====================
 
 // Heater
-#define HEATER_PWM_PIN 25
+#define HEATER_PWM_PIN 16
 #define HEATER_PWM_CHANNEL 0
 #define HEATER_PWM_FREQ 1000
 

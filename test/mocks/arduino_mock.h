@@ -74,6 +74,18 @@ inline int digitalRead(uint8_t pin) { return LOW; }
 inline int analogRead(uint8_t pin) { return 512; }
 inline void analogWrite(uint8_t pin, int value) {}
 
+// Math helpers
+template<typename T>
+inline T constrain(T x, T a, T b) {
+    if (x < a) return a;
+    if (x > b) return b;
+    return x;
+}
+
+inline long map(long x, long in_min, long in_max, long out_min, long out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
 #define F(string_literal) (string_literal)
 
 #endif // ARDUINO_MOCK

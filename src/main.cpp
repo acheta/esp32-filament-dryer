@@ -1,11 +1,12 @@
 /**
- * Main loop - called continuously
+ * ESP32 Dryer - Main Application
+ *
+ * Integrates all control components with sensor display
  */
 
 #include <Arduino.h>
 #include "Config.h"
 #include "Types.h"
-#include "ComponentFactory.h"
 
 // Interfaces
 #include "interfaces/ISensorManager.h"
@@ -19,12 +20,15 @@
 #include "interfaces/IDryer.h"
 #include "interfaces/IDisplay.h"
 
-// TODO: Include actual implementations when created
-// #include "control/HeaterControl.h"
-// #include "control/PIDController.h"
-// #include "control/SafetyMonitor.h"
-// #include "storage/SettingsStorage.h"
-// #include "userInterface/SoundController.h"
+// Implementations
+#include "sensors/HeaterTempSensor.h"
+#include "sensors/BoxTempHumiditySensor.h"
+#include "sensors/SensorManager.h"
+#include "control/HeaterControl.h"
+#include "control/PIDController.h"
+#include "control/SafetyMonitor.h"
+#include "userInterface/OLEDDisplay.h"
+#include "Dryer.h"
 
 // Global component pointers
 IHeaterTempSensor* heaterSensor = nullptr;
@@ -34,22 +38,109 @@ IDisplay* oledDisplay = nullptr;
 IHeaterControl* heaterControl = nullptr;
 IPIDController* pidController = nullptr;
 ISafetyMonitor* safetyMonitor = nullptr;
-ISettingsStorage* settingsStorage = nullptr;
 ISoundController* soundController = nullptr;
 IDryer* dryer = nullptr;
-
-// Factory pointers
-IHeaterTempSensorFactory* heaterSensorFactory = nullptr;
-IBoxTempHumiditySensorFactory* boxSensorFactory = nullptr;
-ISensorManagerFactory* sensorManagerFactory = nullptr;
-IDisplayFactory* displayFactory = nullptr;
-IDryerFactory* dryerFactory = nullptr;
 
 // Display update timing
 uint32_t lastDisplayUpdate = 0;
 
 /**
- * Initialize all hardware and create component instances using factories
+ * Enhanced display showing both sensor data and dryer status
+ */
+void updateDisplay() {
+    oledDisplay->clear();
+
+    // Get current sensor readings
+    float heaterTemp = sensorManager->getHeaterTemp();
+    bool heaterValid = sensorManager->isHeaterTempValid();
+    float boxTemp = sensorManager->getBoxTemp();
+    float boxHumidity = sensorManager->getBoxHumidity();
+    bool boxValid = sensorManager->isBoxDataValid();
+
+    // Get dryer stats
+    CurrentStats stats = dryer->getCurrentStats();
+
+    // Line 1: State and heater temp
+    oledDisplay->setCursor(0, 0);
+    oledDisplay->setTextSize(1);
+
+    // Show state
+    switch(stats.state) {
+        case DryerState::READY:
+            oledDisplay->print("RDY ");
+            break;
+        case DryerState::RUNNING:
+            oledDisplay->print("RUN ");
+            break;
+        case DryerState::PAUSED:
+            oledDisplay->print("PAU ");
+            break;
+        case DryerState::FINISHED:
+            oledDisplay->print("FIN ");
+            break;
+        case DryerState::FAILED:
+            oledDisplay->print("ERR ");
+            break;
+        case DryerState::POWER_RECOVERED:
+            oledDisplay->print("PWR ");
+            break;
+    }
+
+    // Heater temp
+    if (heaterValid) {
+        oledDisplay->print("H:");
+        oledDisplay->print(String(heaterTemp, 1));
+        oledDisplay->print("C");
+    } else {
+        oledDisplay->print("H:--");
+    }
+
+    // Target temp (if running)
+    if (stats.state == DryerState::RUNNING || stats.state == DryerState::PAUSED) {
+        oledDisplay->print("/");
+        oledDisplay->print(String(stats.targetTemp, 0));
+    }
+
+    // Line 2: Box temp and humidity
+    oledDisplay->setCursor(0, 12);
+    oledDisplay->print("Box:");
+    if (boxValid) {
+        oledDisplay->print(String(boxTemp, 1));
+        oledDisplay->print("C ");
+        oledDisplay->print(String(boxHumidity, 0));
+        oledDisplay->print("%");
+    } else {
+        oledDisplay->print("--");
+    }
+
+    // Line 3: Timer (if running or paused)
+    if (stats.state == DryerState::RUNNING || stats.state == DryerState::PAUSED) {
+        oledDisplay->setCursor(0, 24);
+
+        // Elapsed time
+        uint32_t elapsedMin = stats.elapsedTime / 60;
+        uint32_t elapsedSec = stats.elapsedTime % 60;
+        oledDisplay->print(String(elapsedMin));
+        oledDisplay->print(":");
+        if (elapsedSec < 10) oledDisplay->print("0");
+        oledDisplay->print(String(elapsedSec));
+
+        // Remaining time
+        oledDisplay->print("/");
+        uint32_t remainMin = stats.remainingTime / 60;
+        oledDisplay->print(String(remainMin));
+        oledDisplay->print("m");
+
+        // PWM output
+        oledDisplay->print(" ");
+        oledDisplay->print(String((int)stats.pwmOutput));
+    }
+
+    oledDisplay->display();
+}
+
+/**
+ * Initialize all hardware and create component instances
  */
 void setup() {
     // Initialize serial for debugging
@@ -58,116 +149,66 @@ void setup() {
     Serial.println("ESP32 Dryer Initializing...");
     Serial.println("========================================\n");
 
-    // ==================== Create Factories ====================
-    Serial.println("Creating component factories...");
+    // ==================== Create Sensor Components ====================
+    Serial.println("Creating sensor components...");
 
-    heaterSensorFactory = ComponentFactoryProvider::getHeaterTempSensorFactory();
-    Serial.println("  - HeaterTempSensor factory created");
-
-    boxSensorFactory = ComponentFactoryProvider::getBoxTempHumiditySensorFactory();
-    Serial.println("  - BoxTempHumiditySensor factory created");
-
-    sensorManagerFactory = ComponentFactoryProvider::getSensorManagerFactory();
-    Serial.println("  - SensorManager factory created");
-
-    displayFactory = ComponentFactoryProvider::getDisplayFactory();
-    Serial.println("  - Display factory created");
-
-    dryerFactory = ComponentFactoryProvider::getDryerFactory();
-    Serial.println("  - Dryer factory created");
-
-    // ==================== Create Sensor Objects Using Factories ====================
-    Serial.println("\nCreating sensor objects from factories...");
-
-    // Create heater temperature sensor (DS18B20)
-    heaterSensor = heaterSensorFactory->create();
+    heaterSensor = new HeaterTempSensor(HEATER_TEMP_PIN);
     Serial.println("  - Heater temperature sensor created");
 
-    // Create box temperature/humidity sensor (AM2320)
-    boxSensor = boxSensorFactory->create();
+    boxSensor = new BoxTempHumiditySensor();
     Serial.println("  - Box temp/humidity sensor created");
 
-    // Create sensor manager with injected sensors
-    // Note: For production, SensorManager factory creates its own sensors internally
-    // For maximum flexibility, we could modify the factory to accept sensors as parameters
     sensorManager = new SensorManager(heaterSensor, boxSensor);
-    Serial.println("  - SensorManager created with injected sensors");
+    Serial.println("  - SensorManager created");
 
-    // Create OLED display
-    oledDisplay = displayFactory->create();
+    // ==================== Create Display ====================
+    Serial.println("\nCreating display...");
+
+    oledDisplay = new OLEDDisplay(128, 64, 0x3C);
     Serial.println("  - OLED Display created");
 
     // ==================== Create Control Components ====================
     Serial.println("\nCreating control components...");
 
-    // TODO: Create factories and use them when components are implemented
-    // IHeaterControlFactory* heaterControlFactory = ComponentFactoryProvider::getHeaterControlFactory();
-    // heaterControl = heaterControlFactory->create();
-    // Serial.println("  - HeaterControl created");
+    heaterControl = new HeaterControl();
+    Serial.println("  - HeaterControl created");
 
-    // IPIDControllerFactory* pidControllerFactory = ComponentFactoryProvider::getPIDControllerFactory();
-    // pidController = pidControllerFactory->create();
-    // Serial.println("  - PIDController created");
+    pidController = new PIDController();
+    Serial.println("  - PIDController created");
 
-    // ISafetyMonitorFactory* safetyMonitorFactory = ComponentFactoryProvider::getSafetyMonitorFactory();
-    // safetyMonitor = safetyMonitorFactory->create();
-    // Serial.println("  - SafetyMonitor created");
+    safetyMonitor = new SafetyMonitor();
+    Serial.println("  - SafetyMonitor created");
 
-    // ==================== Create Storage Components ====================
-    Serial.println("\nCreating storage components...");
+    // ==================== Create Placeholder Components ====================
+    Serial.println("\nCreating placeholder components...");
 
-    // TODO: Create factories and use them when implemented
-    // ISettingsStorageFactory* storageFactory = ComponentFactoryProvider::getSettingsStorageFactory();
-    // settingsStorage = storageFactory->create();
-    // Serial.println("  - SettingsStorage created");
+    soundController = nullptr; // Will use nullptr for now
+    Serial.println("  - Sound controller placeholder set");
 
-    // ==================== Create UI Components ====================
-    Serial.println("\nCreating UI components...");
+    // ==================== Create Dryer Orchestrator ====================
+    Serial.println("\nCreating Dryer orchestrator...");
 
-    // TODO: Create factories and use them when implemented
-    // ISoundControllerFactory* soundFactory = ComponentFactoryProvider::getSoundControllerFactory();
-    // soundController = soundFactory->create();
-    // Serial.println("  - SoundController created");
-
-    // ==================== Create Main Dryer Orchestrator Using Factory ====================
-    Serial.println("\nCreating Dryer orchestrator from factory...");
-
-    // TODO: Uncomment when all components are implemented
-    /*
-    dryer = dryerFactory->create(
+    dryer = new Dryer(
         sensorManager,
         heaterControl,
         pidController,
         safetyMonitor,
-        settingsStorage,
+        nullptr,  // settingsStorage - not implemented yet
         soundController
     );
-    Serial.println("  - Dryer created via factory");
-    */
+    Serial.println("  - Dryer created");
 
     // ==================== Initialize All Components ====================
     Serial.println("\n========================================");
     Serial.println("Initializing components...");
     Serial.println("========================================\n");
 
-    // Initialize sensor manager (which initializes sensors)
     sensorManager->begin();
     Serial.println("  ✓ SensorManager initialized");
 
-    // Initialize OLED display
     oledDisplay->begin();
     Serial.println("  ✓ OLED Display initialized");
 
-    // Show startup message on display
-    oledDisplay->clear();
-    oledDisplay->setCursor(0, 0);
-    oledDisplay->setTextSize(1);
-    oledDisplay->println("Dryer Starting...");
-    oledDisplay->display();
-    delay(1000);  // Show startup message briefly
-
-    // TODO: Initialize other components when created
-    /*
     heaterControl->begin();
     Serial.println("  ✓ HeaterControl initialized");
 
@@ -177,74 +218,42 @@ void setup() {
     safetyMonitor->begin();
     Serial.println("  ✓ SafetyMonitor initialized");
 
-    settingsStorage->begin();
-    Serial.println("  ✓ SettingsStorage initialized");
-
-    soundController->begin();
-    Serial.println("  ✓ SoundController initialized");
-
     // Initialize dryer (sets up callbacks, loads settings, etc.)
     dryer->begin();
     Serial.println("  ✓ Dryer initialized");
-    */
 
-    // ==================== Register Test Callbacks ====================
-    Serial.println("\nRegistering sensor callbacks...");
+    // ==================== Show Startup Message ====================
+    oledDisplay->clear();
+    oledDisplay->setCursor(0, 0);
+    oledDisplay->setTextSize(1);
+    oledDisplay->println("Dryer Ready");
+    oledDisplay->println("");
+    oledDisplay->println("Starting in");
+    oledDisplay->println("demo mode...");
+    oledDisplay->display();
+    delay(2000);
 
-    // Register callback to print heater temperature
-    sensorManager->registerHeaterTempCallback(
-        [](float temp, uint32_t timestamp) {
-            Serial.print("[");
-            Serial.print(timestamp);
-            Serial.print("ms] Heater: ");
-            Serial.print(temp, 1);
-            Serial.println("°C");
-        }
-    );
-
-    // Register callback to print box data
-    sensorManager->registerBoxDataCallback(
-        [](float temp, float humidity, uint32_t timestamp) {
-            Serial.print("[");
-            Serial.print(timestamp);
-            Serial.print("ms] Box: ");
-            Serial.print(temp, 1);
-            Serial.print("°C, ");
-            Serial.print(humidity, 1);
-            Serial.println("%RH");
-        }
-    );
-
-    // Register callback to print sensor errors
-    sensorManager->registerSensorErrorCallback(
-        [](SensorType type, const String& error) {
-            Serial.print("⚠️  SENSOR ERROR - ");
-            switch(type) {
-                case SensorType::HEATER_TEMP:
-                    Serial.print("Heater Temp: ");
-                    break;
-                case SensorType::BOX_TEMP:
-                    Serial.print("Box Temp: ");
-                    break;
-                case SensorType::BOX_HUMIDITY:
-                    Serial.print("Box Humidity: ");
-                    break;
-                default:
-                    Serial.print("Unknown: ");
-                    break;
-            }
-            Serial.println(error);
-        }
-    );
-
-    Serial.println("  ✓ Callbacks registered");
-
-    // ==================== Startup Complete ====================
+    // ==================== Configure and Start Demo ====================
     Serial.println("\n========================================");
-    Serial.println("✓ ESP32 Dryer Ready!");
+    Serial.println("Starting Demo Mode");
     Serial.println("========================================\n");
 
-    // Display initial sensor status
+    // Select PLA preset
+    dryer->selectPreset(PresetType::PLA);
+    Serial.println("Preset: PLA (50°C, 4 hours)");
+
+    // Set NORMAL PID profile
+    dryer->setPIDProfile(PIDProfile::NORMAL);
+    Serial.println("PID Profile: NORMAL");
+
+    // Start the dryer
+    dryer->start();
+    Serial.println("State: RUNNING");
+
+    Serial.println("\n✓ System operational!");
+    Serial.println("========================================\n");
+
+    // Initial sensor status
     Serial.println("Initial Sensor Status:");
     Serial.print("  Heater Sensor: ");
     Serial.println(sensorManager->isHeaterTempValid() ? "✓ Valid" : "✗ Invalid");
@@ -272,37 +281,24 @@ void setup() {
 void loop() {
     uint32_t currentMillis = millis();
 
-    // Update sensor manager (reads sensors at appropriate intervals)
+    // ==================== Update All Components ====================
+
+    // Update sensors (reads at configured intervals)
     sensorManager->update(currentMillis);
 
-    // Update display periodically (every 200ms)
-    if (currentMillis - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
-        lastDisplayUpdate = currentMillis;
-
-        // Get current sensor readings
-        float heaterTemp = sensorManager->getHeaterTemp();
-        bool heaterValid = sensorManager->isHeaterTempValid();
-        float boxTemp = sensorManager->getBoxTemp();
-        float boxHumidity = sensorManager->getBoxHumidity();
-        bool boxValid = sensorManager->isBoxDataValid();
-
-        // Update display with current readings
-        oledDisplay->showSensorReadings(heaterTemp, heaterValid,
-                                        boxTemp, boxHumidity, boxValid);
-    }
-
-    // TODO: Update other components when implemented
-    /*
-    // Update safety monitor
+    // Update safety monitor (checks timeouts, limits)
     safetyMonitor->update(currentMillis);
 
-    // Update dryer (state machine, timing, etc.)
+    // Update dryer (state machine, PID, timing, persistence)
     dryer->update(currentMillis);
 
-    // Update UI components would be in UIController
-    */
+    // ==================== Update Display ====================
+
+    if (currentMillis - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
+        lastDisplayUpdate = currentMillis;
+        updateDisplay();
+    }
 
     // Small delay to prevent overwhelming the system
-    // In production, this would be handled by UI refresh rates
     delay(10);
 }
