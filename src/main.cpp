@@ -69,6 +69,9 @@ IDryer* dryer = nullptr;
 // Display update timing
 uint32_t lastDisplayUpdate = 0;
 
+// Serial command buffer
+String serialCommand = "";
+
 /**
  * Enhanced display showing both sensor data and dryer status
  * Display: 128x32 pixels
@@ -120,10 +123,11 @@ void updateDisplay() {
     oledDisplay->setCursor(24, 0);
 
     if (heaterValid) {
-        oledDisplay->print(String(heaterTemp, 2));
-        oledDisplay->print("");
+        oledDisplay->print(String(heaterTemp, 1));
+        oledDisplay->setTextSize(1);
+        oledDisplay->print("C");
     } else {
-        oledDisplay->print("--");
+        oledDisplay->print("--C");
     }
 
     // Target temp (if running/paused)
@@ -183,6 +187,238 @@ void updateDisplay() {
     }
 
     oledDisplay->display();
+}
+
+/**
+ * Handle serial commands for controlling the dryer
+ * Commands:
+ *   start         - Start drying cycle
+ *   pause         - Pause current cycle
+ *   resume        - Resume from pause
+ *   stop          - Stop and return to ready
+ *   reset         - Reset to ready state
+ *   preset pla    - Select PLA preset
+ *   preset petg   - Select PETG preset
+ *   preset custom - Select custom preset
+ *   pid soft      - Set PID profile to SOFT
+ *   pid normal    - Set PID profile to NORMAL
+ *   pid strong    - Set PID profile to STRONG
+ *   sound on      - Enable sound
+ *   sound off     - Disable sound
+ *   status        - Print current status
+ *   help          - Show available commands
+ */
+void handleSerialCommand(String cmd) {
+    cmd.trim();
+    cmd.toLowerCase();
+
+    if (cmd == "start") {
+        dryer->start();
+        Serial.println("✓ Started");
+    }
+    else if (cmd == "pause") {
+        dryer->pause();
+        Serial.println("✓ Paused");
+    }
+    else if (cmd == "resume") {
+        dryer->resume();
+        Serial.println("✓ Resumed");
+    }
+    else if (cmd == "stop") {
+        dryer->stop();
+        Serial.println("✓ Stopped");
+    }
+    else if (cmd == "reset") {
+        dryer->reset();
+        Serial.println("✓ Reset");
+    }
+    else if (cmd == "preset pla") {
+        dryer->selectPreset(PresetType::PLA);
+        Serial.println("✓ PLA preset selected (50°C, 4h)");
+    }
+    else if (cmd == "preset petg") {
+        dryer->selectPreset(PresetType::PETG);
+        Serial.println("✓ PETG preset selected (65°C, 5h)");
+    }
+    else if (cmd == "preset custom") {
+        dryer->selectPreset(PresetType::CUSTOM);
+        Serial.println("✓ Custom preset selected");
+    }
+    else if (cmd == "pid soft") {
+        dryer->setPIDProfile(PIDProfile::SOFT);
+        Serial.println("✓ PID profile: SOFT");
+    }
+    else if (cmd == "pid normal") {
+        dryer->setPIDProfile(PIDProfile::NORMAL);
+        Serial.println("✓ PID profile: NORMAL");
+    }
+    else if (cmd == "pid strong") {
+        dryer->setPIDProfile(PIDProfile::STRONG);
+        Serial.println("✓ PID profile: STRONG");
+    }
+    else if (cmd == "sound on") {
+        dryer->setSoundEnabled(true);
+        Serial.println("✓ Sound enabled");
+    }
+    else if (cmd == "sound off") {
+        dryer->setSoundEnabled(false);
+        Serial.println("✓ Sound disabled");
+    }
+    else if (cmd == "status") {
+        CurrentStats stats = dryer->getCurrentStats();
+
+        Serial.println("\n========== DRYER STATUS ==========");
+
+        // State
+        Serial.print("State: ");
+        switch(stats.state) {
+            case DryerState::READY:
+                Serial.println("READY");
+                break;
+            case DryerState::RUNNING:
+                Serial.println("RUNNING");
+                break;
+            case DryerState::PAUSED:
+                Serial.println("PAUSED");
+                break;
+            case DryerState::FINISHED:
+                Serial.println("FINISHED");
+                break;
+            case DryerState::FAILED:
+                Serial.println("FAILED");
+                break;
+            case DryerState::POWER_RECOVERED:
+                Serial.println("POWER_RECOVERED");
+                break;
+        }
+
+        // Active preset
+        Serial.print("Preset: ");
+        switch(stats.activePreset) {
+            case PresetType::PLA:
+                Serial.println("PLA");
+                break;
+            case PresetType::PETG:
+                Serial.println("PETG");
+                break;
+            case PresetType::CUSTOM:
+                Serial.println("CUSTOM");
+                break;
+        }
+
+        // PID profile
+        Serial.print("PID Profile: ");
+        switch(dryer->getPIDProfile()) {
+            case PIDProfile::SOFT:
+                Serial.println("SOFT");
+                break;
+            case PIDProfile::NORMAL:
+                Serial.println("NORMAL");
+                break;
+            case PIDProfile::STRONG:
+                Serial.println("STRONG");
+                break;
+        }
+
+        // Temperatures
+        Serial.print("Heater Temp: ");
+        if (sensorManager->isHeaterTempValid()) {
+            Serial.print(stats.currentTemp, 1);
+            Serial.print("°C / ");
+            Serial.print(stats.targetTemp, 0);
+            Serial.println("°C");
+        } else {
+            Serial.println("INVALID");
+        }
+
+        Serial.print("Box Temp: ");
+        if (sensorManager->isBoxDataValid()) {
+            Serial.print(stats.boxTemp, 1);
+            Serial.println("°C");
+        } else {
+            Serial.println("INVALID");
+        }
+
+        Serial.print("Box Humidity: ");
+        if (sensorManager->isBoxDataValid()) {
+            Serial.print(stats.boxHumidity, 1);
+            Serial.println("%");
+        } else {
+            Serial.println("INVALID");
+        }
+
+        // Timer info
+        if (stats.state == DryerState::RUNNING || stats.state == DryerState::PAUSED) {
+            Serial.print("Elapsed: ");
+            Serial.print(stats.elapsedTime / 60);
+            Serial.print(":");
+            if (stats.elapsedTime % 60 < 10) Serial.print("0");
+            Serial.println(stats.elapsedTime % 60);
+
+            Serial.print("Remaining: ");
+            Serial.print(stats.remainingTime / 60);
+            Serial.println(" min");
+        }
+
+        // PWM output
+        Serial.print("PWM Output: ");
+        Serial.print((int)stats.pwmOutput);
+        Serial.println(" / 255");
+
+        // Sound
+        Serial.print("Sound: ");
+        Serial.println(dryer->isSoundEnabled() ? "ON" : "OFF");
+
+        Serial.println("==================================\n");
+    }
+    else if (cmd == "help" || cmd == "?") {
+        Serial.println("\n========== AVAILABLE COMMANDS ==========");
+        Serial.println("State Control:");
+        Serial.println("  start         - Start drying cycle");
+        Serial.println("  pause         - Pause current cycle");
+        Serial.println("  resume        - Resume from pause");
+        Serial.println("  stop          - Stop and return to ready");
+        Serial.println("  reset         - Reset to ready state");
+        Serial.println("\nPreset Selection:");
+        Serial.println("  preset pla    - Select PLA preset (50°C, 4h)");
+        Serial.println("  preset petg   - Select PETG preset (65°C, 5h)");
+        Serial.println("  preset custom - Select custom preset");
+        Serial.println("\nPID Profile:");
+        Serial.println("  pid soft      - Gentle heating (Kp=2.0)");
+        Serial.println("  pid normal    - Balanced (Kp=4.0)");
+        Serial.println("  pid strong    - Aggressive (Kp=6.0)");
+        Serial.println("\nSettings:");
+        Serial.println("  sound on      - Enable sound");
+        Serial.println("  sound off     - Disable sound");
+        Serial.println("\nInfo:");
+        Serial.println("  status        - Print current status");
+        Serial.println("  help          - Show this help");
+        Serial.println("========================================\n");
+    }
+    else if (cmd.length() > 0) {
+        Serial.print("✗ Unknown command: '");
+        Serial.print(cmd);
+        Serial.println("'");
+        Serial.println("Type 'help' for available commands");
+    }
+}
+
+/**
+ * Process serial input
+ */
+void processSerialInput() {
+    while (Serial.available() > 0) {
+        char c = Serial.read();
+
+        if (c == '\n' || c == '\r') {
+            if (serialCommand.length() > 0) {
+                handleSerialCommand(serialCommand);
+                serialCommand = "";
+            }
+        } else {
+            serialCommand += c;
+        }
+    }
 }
 
 /**
@@ -332,6 +568,9 @@ void setup() {
 
 void loop() {
     uint32_t currentMillis = millis();
+
+    // ==================== Process Serial Commands ====================
+    processSerialInput();
 
     // ==================== Update All Components ====================
 
