@@ -175,7 +175,7 @@ void updateDisplay() {
         oledDisplay->setTextSize(1);
         if (boxValid) {
             oledDisplay->print("B:");
-            oledDisplay->print(String(boxTemp, 0));
+            oledDisplay->print(String(boxTemp, 1));
             oledDisplay->print("C ");
             oledDisplay->print(String(boxHumidity, 0));
             oledDisplay->print("%");
