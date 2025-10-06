@@ -330,10 +330,10 @@ SensorManager detects overheat
 - **POWER_RECOVERED**: Recovered from power loss, awaiting user action
 
 #### State Persistence
-- Save to LittleFS every second during RUNNING
+- Save to LittleFS every minute during RUNNING
 - Include: state, elapsed time, target temp/time, active preset, timestamp
 - On boot: check for valid runtime state
-- If found and recent (<5 min): transition to POWER_RECOVERED
+- If found and recent RUNNING state after power on: transition to POWER_RECOVERED
 - User must explicitly continue or reset
 
 ### 6. Timing Specifications

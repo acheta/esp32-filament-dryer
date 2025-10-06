@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include "Config.h"
 #include "Types.h"
+#include <esp_task_wdt.h>  // Hardware watchdog timer
 
 // Interfaces
 #include "interfaces/ISensorManager.h"
@@ -54,6 +55,9 @@
     };
 #endif
 
+// Watchdog configuration
+constexpr uint32_t WATCHDOG_TIMEOUT_SECONDS = 10;  // Reset if loop doesn't run for 10 seconds
+
 // Global component pointers
 IHeaterTempSensor* heaterSensor = nullptr;
 IBoxTempHumiditySensor* boxSensor = nullptr;
@@ -71,6 +75,7 @@ uint32_t lastDisplayUpdate = 0;
 
 // Serial command buffer
 String serialCommand = "";
+constexpr size_t MAX_SERIAL_COMMAND_LENGTH = 100;  // Prevent buffer overflow
 
 /**
  * Enhanced display showing both sensor data and dryer status
@@ -404,7 +409,7 @@ void handleSerialCommand(String cmd) {
 }
 
 /**
- * Process serial input
+ * Process serial input with buffer overflow protection
  */
 void processSerialInput() {
     while (Serial.available() > 0) {
@@ -416,8 +421,50 @@ void processSerialInput() {
                 serialCommand = "";
             }
         } else {
-            serialCommand += c;
+            // Prevent buffer overflow
+            if (serialCommand.length() < MAX_SERIAL_COMMAND_LENGTH) {
+                serialCommand += c;
+            } else {
+                // Buffer full - discard command and reset
+                Serial.println("✗ Command too long (max 100 chars)");
+                serialCommand = "";
+            }
         }
+    }
+}
+
+/**
+ * Initialize hardware watchdog timer
+ *
+ * Protects against software hangs (infinite loops, deadlocks, stack overflow).
+ * If loop() doesn't call esp_task_wdt_reset() within timeout, ESP32 resets itself.
+ *
+ * NOTE: This does NOT protect against firmware corruption or hardware failures.
+ *       For complete safety, consider adding external 555 timer watchdog circuit.
+ */
+void setupWatchdog() {
+    Serial.println("Configuring hardware watchdog timer...");
+
+    // Initialize watchdog with timeout (older API compatible with more ESP-IDF versions)
+    esp_err_t result = esp_task_wdt_init(WATCHDOG_TIMEOUT_SECONDS, true);
+    // Parameters: timeout in seconds, panic on timeout (true = reset ESP32)
+
+    if (result == ESP_OK) {
+        // Add current task (loop task) to watchdog monitoring
+        result = esp_task_wdt_add(NULL);  // NULL = current task
+
+        if (result == ESP_OK) {
+            Serial.print("  ✓ Hardware watchdog enabled (");
+            Serial.print(WATCHDOG_TIMEOUT_SECONDS);
+            Serial.println(" second timeout)");
+            Serial.println("  → System will auto-reset if loop() hangs");
+        } else {
+            Serial.println("  ✗ WARNING: Failed to add task to watchdog!");
+            Serial.println("  → Watchdog protection NOT active");
+        }
+    } else {
+        Serial.println("  ✗ WARNING: Failed to initialize watchdog!");
+        Serial.println("  → Watchdog protection NOT active");
     }
 }
 
@@ -427,9 +474,15 @@ void processSerialInput() {
 void setup() {
     // Initialize serial for debugging
     Serial.begin(115200);
+    delay(100);  // Give serial time to initialize
+
     Serial.println("\n\n========================================");
     Serial.println("ESP32 Dryer Initializing...");
     Serial.println("========================================\n");
+
+    // ==================== Initialize Hardware Watchdog ====================
+    setupWatchdog();
+    Serial.println();
 
     // ==================== Create Sensor Components ====================
     Serial.println("Creating sensor components...");
@@ -563,11 +616,17 @@ void setup() {
         Serial.println("%RH");
     }
 
-    Serial.println("\nStarting main loop...\n");
+    Serial.println("\nStarting main loop...");
+    Serial.println("Type 'help' for available commands\n");
 }
 
 void loop() {
     uint32_t currentMillis = millis();
+
+    // ==================== Pet the Watchdog ====================
+    // CRITICAL: This must be called every loop iteration
+    // If loop hangs for >10 seconds, watchdog triggers ESP32 reset
+    esp_task_wdt_reset();
 
     // ==================== Process Serial Commands ====================
     processSerialInput();
