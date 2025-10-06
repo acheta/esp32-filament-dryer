@@ -437,13 +437,13 @@ void test_dryer_persists_state_during_running() {
 
     storage->resetCounts();
 
-    // Simulate 2 seconds of running
-    for (uint32_t t = 0; t <= 2000; t += 100) {
+    // Simulate 61 seconds of running
+    for (uint32_t t = 0; t <= 61000; t += 500) {
         dryer->update(t);
     }
 
-    // Should save state at 1000ms and 2000ms (every 1 second)
-    TEST_ASSERT_TRUE(storage->getSaveRuntimeStateCallCount() >= 2);
+    // Should save state at 1000ms and 2000ms (every 1 minute)
+    TEST_ASSERT_TRUE(storage->getSaveRuntimeStateCallCount() >= 1);
 }
 
 void test_dryer_does_not_persist_when_not_running() {

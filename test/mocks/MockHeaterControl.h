@@ -66,6 +66,10 @@ public:
         return pwmValue;
     }
 
+    void update(uint32_t currentMillis) override {
+        // Mock doesn't need to do anything
+    }
+
     // Test helpers
     bool isInitialized() const { return initialized; }
     uint32_t getStartCallCount() const { return startCallCount; }

@@ -126,12 +126,11 @@ constexpr uint32_t POWER_RECOVERY_TIMEOUT = 300000; // 5 minutes
 
 // ==================== PWM Configuration ====================
 
-constexpr uint32_t HEATER_PWM_PERIOD_MS = 5000;
-constexpr float HEATER_PWM_FREQ = 1000.0 / HEATER_PWM_PERIOD_MS;  // = 0.2 Hz
-constexpr uint8_t PWM_RESOLUTION = 8;         // 8-bit (0-255)
+constexpr uint32_t HEATER_PWM_PERIOD_MS = 5000;   // 5 second period
+constexpr float HEATER_PWM_FREQ = 1000.0 / HEATER_PWM_PERIOD_MS;  // 0.2 Hz (for reference only)
+
 constexpr uint8_t PWM_MIN = 0;
 constexpr uint8_t PWM_MAX = 255;
-constexpr uint8_t HEATER_PWM_CHANNEL = 0;
 
 
 // ==================== PID Configuration ====================

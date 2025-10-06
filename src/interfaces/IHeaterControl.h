@@ -4,7 +4,6 @@
 #ifndef UNIT_TEST
     #include <Arduino.h>
 #else
-    // Mock Arduino functions for native testing
     #include "../../test/mocks/arduino_mock.h"
 #endif
 
@@ -16,6 +15,7 @@ public:
     virtual void stop() = 0;
     virtual void emergencyStop() = 0;
     virtual void setPWM(uint8_t value) = 0;
+    virtual void update(uint32_t currentMillis) = 0;  // NEW: For software PWM
     virtual bool isRunning() const = 0;
     virtual uint8_t getCurrentPWM() const = 0;
 };

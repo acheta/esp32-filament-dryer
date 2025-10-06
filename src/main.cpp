@@ -642,6 +642,8 @@ void loop() {
     // Update dryer (state machine, PID, timing, persistence)
     dryer->update(currentMillis);
 
+    heaterControl->update(currentMillis);
+
     // ==================== Update Display ====================
 
     if (currentMillis - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
