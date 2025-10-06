@@ -8,30 +8,97 @@
     #include "../test/mocks/arduino_mock.h"
 #endif
 
-// ==================== Hardware Pins ====================
+// ============================================================================
+// BOARD SELECTION - Uncomment ONE of these
+// ============================================================================
+#define ESP32_C3_BOARD    // ESP32-C3 Super Mini
+// #define ESP32_S3_BOARD    // ESP32-S3 DevKit
 
-// Heater
-#define HEATER_PWM_PIN 16
-#define HEATER_PWM_CHANNEL 0
-#define HEATER_PWM_FREQ 1000
 
-// Sensors
-#define HEATER_TEMP_PIN 4        // DS18B20 OneWire
-#define BOX_SENSOR_SDA 21        // AM2320 I2C
-#define BOX_SENSOR_SCL 22        // AM2320 I2C
+#ifdef ESP32_C3_BOARD
+// ============================================================================
+// ESP32-C3 SUPER MINI PINOUT (Based on actual board layout)
+// ============================================================================
+// Available GPIOs: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21
+// Hardware I2C: SDA=GPIO8 (conflicts with LED!), SCL=GPIO9
+// Hardware SPI: MISO=GPIO5, MOSI=GPIO6, SS=GPIO7
+// UART: TX=GPIO20, RX=GPIO21
+// ADC: GPIO0-4 (A0-A4)
+// Built-in LED: GPIO8 (active LOW, conflicts with I2C SDA!)
+// Boot button: GPIO9 (conflicts with I2C SCL!)
+// ============================================================================
 
-// Buttons
-#define BUTTON_SET_PIN 32
-#define BUTTON_UP_PIN 33
-#define BUTTON_DOWN_PIN 34
+// Status LED - We'll use this sparingly or not at all due to I2C conflict
+constexpr uint8_t STATUS_LED_PIN = 8;      // Shared with I2C SDA!
 
-// Display (I2C OLED)
-#define OLED_SDA 21
-#define OLED_SCL 22
-#define OLED_ADDRESS 0x3C
+// Heater Control - Use a free GPIO with PWM capability
+constexpr uint8_t HEATER_PWM_PIN = 10;     // Free GPIO, PWM capable
 
-// Sound
-#define BUZZER_PIN 26
+// Temperature Sensors
+constexpr uint8_t HEATER_TEMP_PIN = 4;     // DS18B20 OneWire (A4)
+
+// I2C Bus (for AM2320 + OLED)
+// OPTION A: Use hardware I2C but sacrifice LED
+constexpr uint8_t I2C_SDA_PIN = 8;         // Hardware I2C (shares with LED!)
+constexpr uint8_t I2C_SCL_PIN = 9;         // Hardware I2C (shares with BOOT!)
+
+// OPTION B: Use software I2C on different pins (recommended)
+// Uncomment these and comment out the lines above if you want the LED working
+// constexpr uint8_t I2C_SDA_PIN = 6;      // Software I2C (was MOSI)
+// constexpr uint8_t I2C_SCL_PIN = 7;      // Software I2C (was SS)
+
+// Buttons - Use analog-capable pins with internal pull-ups
+constexpr uint8_t BUTTON_SET_PIN = 0;      // A0
+constexpr uint8_t BUTTON_UP_PIN = 1;       // A1
+constexpr uint8_t BUTTON_DOWN_PIN = 2;     // A2
+
+// Buzzer
+constexpr uint8_t BUZZER_PIN = 3;          // A3
+
+// Boot button (built-in) - GPIO9 also used for SCL!
+constexpr uint8_t BOOT_BUTTON_PIN = 9;
+
+#endif // ESP32_C3_BOARD
+
+// ============================================================================
+// ESP32-S3 DEVKIT PINOUT
+// ============================================================================
+#ifdef ESP32_S3_BOARD
+
+// Available GPIOs: 0-21, 26-48 (avoid 26-32 for Flash/PSRAM)
+// Strapping pins: 0, 3, 45, 46 (use with caution)
+// USB: GPIO 19 (D-), GPIO 20 (D+) - avoid to keep USB working
+
+// Status LED (RGB LED on many S3 DevKits)
+constexpr uint8_t STATUS_LED_PIN = 48;     // Or use GPIO2 for simple LED
+
+// Heater Control
+constexpr uint8_t HEATER_PWM_PIN = 16;      // Safe GPIO, PWM capable
+
+// Temperature Sensors
+constexpr uint8_t HEATER_TEMP_PIN = 4;     // DS18B20 OneWire
+
+// I2C Bus (for AM2320 + OLED) - Default hardware I2C
+constexpr uint8_t I2C_SDA_PIN = 8;         // Default hardware I2C SDA
+constexpr uint8_t I2C_SCL_PIN = 9;         // Default hardware I2C SCL
+
+// Buttons (with internal pull-ups)
+constexpr uint8_t BUTTON_SET_PIN = 1;      // not implemented/tested
+constexpr uint8_t BUTTON_UP_PIN = 2;       // not implemented/tested
+constexpr uint8_t BUTTON_DOWN_PIN = 42;    // not implemented/tested
+
+// Buzzer
+constexpr uint8_t BUZZER_PIN = 26;         // not implemented/tested
+
+// Boot button (built-in)
+constexpr uint8_t BOOT_BUTTON_PIN = 0;     // Strapping pin
+
+#endif // ESP32_S3_BOARD
+
+// ============================================================================
+// COMMON CONFIGURATION (Both boards)
+// ============================================================================
+
 
 // ==================== Timing Constants ====================
 
@@ -59,10 +126,12 @@ constexpr uint32_t POWER_RECOVERY_TIMEOUT = 300000; // 5 minutes
 
 // ==================== PWM Configuration ====================
 
-constexpr uint32_t PWM_PERIOD_MS = 5000;      // 5 second PWM period
+constexpr float HEATER_PWM_FREQ = 0.2;         // 1/5000ms = 0.2 Hz
 constexpr uint8_t PWM_RESOLUTION = 8;         // 8-bit (0-255)
 constexpr uint8_t PWM_MIN = 0;
 constexpr uint8_t PWM_MAX = 255;
+constexpr uint8_t HEATER_PWM_CHANNEL = 0;
+
 
 // ==================== PID Configuration ====================
 
