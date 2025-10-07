@@ -547,7 +547,7 @@ void setup() {
     oledDisplay->begin();
     Serial.println("  ✓ OLED Display initialized");
 
-    heaterControl->begin();
+    heaterControl->begin(millis());
     Serial.println("  ✓ HeaterControl initialized");
 
     pidController->begin();
@@ -560,7 +560,7 @@ void setup() {
     Serial.println("  ✓ SettingsStorage initialized");
 
     // Initialize dryer (sets up callbacks, loads settings, etc.)
-    dryer->begin();
+    dryer->begin(millis());
     Serial.println("  ✓ Dryer initialized");
 
     // ==================== Show Startup Message ====================

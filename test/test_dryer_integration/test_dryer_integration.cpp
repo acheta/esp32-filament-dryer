@@ -46,7 +46,7 @@ void tearDown(void) {
 // ==================== Initialization Tests ====================
 
 void test_dryer_initializes_all_components() {
-    dryer->begin();
+    dryer->begin(0);
 
     TEST_ASSERT_TRUE(sensors->isInitialized());
     TEST_ASSERT_TRUE(heater->isInitialized());
@@ -57,12 +57,12 @@ void test_dryer_initializes_all_components() {
 }
 
 void test_dryer_starts_in_ready_state() {
-    dryer->begin();
+    dryer->begin(0);
     TEST_ASSERT_EQUAL(DryerState::READY, dryer->getState());
 }
 
 void test_dryer_registers_callbacks_with_components() {
-    dryer->begin();
+    dryer->begin(0);
 
     // Verify callbacks registered
     TEST_ASSERT_EQUAL(1, sensors->getHeaterTempCallbackCount());
@@ -74,7 +74,7 @@ void test_dryer_registers_callbacks_with_components() {
 // ==================== State Transition Tests ====================
 
 void test_dryer_transitions_from_ready_to_running() {
-    dryer->begin();
+    dryer->begin(0);
 
     dryer->start();
 
@@ -83,7 +83,7 @@ void test_dryer_transitions_from_ready_to_running() {
 }
 
 void test_dryer_cannot_start_from_invalid_states() {
-    dryer->begin();
+    dryer->begin(0);
 
     // Start normally
     dryer->start();
@@ -96,7 +96,7 @@ void test_dryer_cannot_start_from_invalid_states() {
 }
 
 void test_dryer_transitions_from_running_to_paused() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     dryer->pause();
@@ -106,7 +106,7 @@ void test_dryer_transitions_from_running_to_paused() {
 }
 
 void test_dryer_resumes_from_paused() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
     dryer->pause();
 
@@ -117,7 +117,7 @@ void test_dryer_resumes_from_paused() {
 }
 
 void test_dryer_resets_to_ready() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     dryer->reset();
@@ -127,7 +127,7 @@ void test_dryer_resets_to_ready() {
 }
 
 void test_dryer_stops_from_running() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     dryer->stop();
@@ -142,7 +142,7 @@ void test_dryer_fires_state_change_callback() {
     DryerState oldState = DryerState::READY;
     DryerState newState = DryerState::READY;
 
-    dryer->begin();
+    dryer->begin(0);
 
     dryer->registerStateChangeCallback(
         [&callbackFired, &oldState, &newState](DryerState old, DryerState newer) {
@@ -162,7 +162,7 @@ void test_dryer_fires_state_change_callback() {
 // ==================== Sensor Integration Tests ====================
 
 void test_dryer_receives_heater_temp_updates() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     // Simulate sensor update
@@ -173,7 +173,7 @@ void test_dryer_receives_heater_temp_updates() {
 }
 
 void test_dryer_updates_pid_on_heater_temp() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     pid->resetCounts();
@@ -186,7 +186,7 @@ void test_dryer_updates_pid_on_heater_temp() {
 }
 
 void test_dryer_sets_heater_pwm_from_pid_output() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     pid->setOutput(150);
@@ -200,7 +200,7 @@ void test_dryer_sets_heater_pwm_from_pid_output() {
 }
 
 void test_dryer_does_not_update_pid_when_not_running() {
-    dryer->begin();
+    dryer->begin(0);
     // Don't start
 
     pid->resetCounts();
@@ -213,7 +213,7 @@ void test_dryer_does_not_update_pid_when_not_running() {
 // ==================== Safety Integration Tests ====================
 
 void test_dryer_transitions_to_failed_on_emergency() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     // Trigger emergency via safety monitor
@@ -225,7 +225,7 @@ void test_dryer_transitions_to_failed_on_emergency() {
 }
 
 void test_dryer_plays_alarm_on_emergency() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     safety->triggerEmergency("Emergency");
@@ -235,7 +235,7 @@ void test_dryer_plays_alarm_on_emergency() {
 }
 
 void test_dryer_saves_emergency_state() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     safety->triggerEmergency("Overheat");
@@ -248,7 +248,7 @@ void test_dryer_saves_emergency_state() {
 // ==================== Timer Tests ====================
 
 void test_dryer_finishes_when_target_time_reached() {
-    dryer->begin();
+    dryer->begin(0);
 
     // Use PLA preset (4 hours = 14400 seconds)
     dryer->selectPreset(PresetType::PLA);
@@ -261,7 +261,7 @@ void test_dryer_finishes_when_target_time_reached() {
 }
 
 void test_dryer_plays_finished_sound() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
     dryer->start();
 
@@ -271,7 +271,7 @@ void test_dryer_plays_finished_sound() {
 }
 
 void test_dryer_clears_runtime_state_on_finish() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
     dryer->start();
 
@@ -285,7 +285,7 @@ void test_dryer_clears_runtime_state_on_finish() {
 // ==================== Stats Update Tests ====================
 
 void test_dryer_provides_current_stats() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
 
     dryer->start();
@@ -305,7 +305,7 @@ void test_dryer_provides_current_stats() {
 }
 
 void test_dryer_calculates_elapsed_time() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
     dryer->start();
 
@@ -317,7 +317,7 @@ void test_dryer_calculates_elapsed_time() {
 }
 
 void test_dryer_calculates_remaining_time() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA); // 14400 seconds
     dryer->start();
 
@@ -331,7 +331,7 @@ void test_dryer_fires_stats_update_callback() {
     bool callbackFired = false;
     CurrentStats receivedStats;
 
-    dryer->begin();
+    dryer->begin(0);
 
     dryer->registerStatsUpdateCallback(
         [&callbackFired, &receivedStats](const CurrentStats& stats) {
@@ -348,7 +348,7 @@ void test_dryer_fires_stats_update_callback() {
 // ==================== Preset Tests ====================
 
 void test_dryer_selects_pla_preset() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
 
     TEST_ASSERT_EQUAL(PresetType::PLA, dryer->getActivePreset());
@@ -358,7 +358,7 @@ void test_dryer_selects_pla_preset() {
 }
 
 void test_dryer_selects_petg_preset() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PETG);
 
     TEST_ASSERT_EQUAL(PresetType::PETG, dryer->getActivePreset());
@@ -368,7 +368,7 @@ void test_dryer_selects_petg_preset() {
 }
 
 void test_dryer_cannot_change_preset_while_running() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
     dryer->start();
 
@@ -382,7 +382,7 @@ void test_dryer_cannot_change_preset_while_running() {
 // ==================== PID Profile Tests ====================
 
 void test_dryer_sets_pid_profile() {
-    dryer->begin();
+    dryer->begin(0);
 
     dryer->setPIDProfile(PIDProfile::SOFT);
     TEST_ASSERT_EQUAL(PIDProfile::SOFT, pid->getProfile());
@@ -392,7 +392,7 @@ void test_dryer_sets_pid_profile() {
 }
 
 void test_dryer_gets_pid_profile() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->setPIDProfile(PIDProfile::SOFT);
 
     TEST_ASSERT_EQUAL(PIDProfile::SOFT, dryer->getPIDProfile());
@@ -401,7 +401,7 @@ void test_dryer_gets_pid_profile() {
 // ==================== Sound Control Tests ====================
 
 void test_dryer_controls_sound_enabled() {
-    dryer->begin();
+    dryer->begin(0);
 
     dryer->setSoundEnabled(false);
     TEST_ASSERT_FALSE(sound->isEnabled());
@@ -411,7 +411,7 @@ void test_dryer_controls_sound_enabled() {
 }
 
 void test_dryer_plays_start_sound() {
-    dryer->begin();
+    dryer->begin(0);
 
     dryer->start();
 
@@ -419,7 +419,7 @@ void test_dryer_plays_start_sound() {
 }
 
 void test_dryer_does_not_play_sound_when_disabled() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->setSoundEnabled(false);
 
     sound->resetCounts();
@@ -432,7 +432,7 @@ void test_dryer_does_not_play_sound_when_disabled() {
 // ==================== State Persistence Tests ====================
 
 void test_dryer_persists_state_during_running() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->start();
 
     storage->resetCounts();
@@ -447,7 +447,7 @@ void test_dryer_persists_state_during_running() {
 }
 
 void test_dryer_does_not_persist_when_not_running() {
-    dryer->begin();
+    dryer->begin(0);
     // Not started
 
     storage->resetCounts();
@@ -461,7 +461,7 @@ void test_dryer_does_not_persist_when_not_running() {
 // ==================== Constraint Getters Tests ====================
 
 void test_dryer_provides_constraints() {
-    dryer->begin();
+    dryer->begin(0);
 
     TEST_ASSERT_EQUAL_FLOAT(30.0, dryer->getMinTemp());
     TEST_ASSERT_EQUAL_FLOAT(80.0, dryer->getMaxTemp());
@@ -472,7 +472,7 @@ void test_dryer_provides_constraints() {
 // ==================== Integration Scenario Tests ====================
 
 void test_dryer_complete_heating_cycle() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
     dryer->setPIDProfile(PIDProfile::NORMAL);
 
@@ -498,7 +498,7 @@ void test_dryer_complete_heating_cycle() {
 }
 
 void test_dryer_pause_and_resume_cycle() {
-    dryer->begin();
+    dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
     dryer->start();
 

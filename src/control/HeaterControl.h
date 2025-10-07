@@ -69,8 +69,6 @@ public:
             value = 0;
         }
 
-
-
         currentPWM = constrain(value, PWM_MIN, PWM_MAX);
 
         // Don't update GPIO here - let update() handle timing
@@ -96,7 +94,7 @@ public:
         }
 
         // Calculate ON time for this cycle
-        uint32_t onTimeMs = (PWM_PERIOD_MS * (uint32_t)currentPWM) / 255;
+        uint32_t onTimeMs = (PWM_PERIOD_MS * (uint32_t)currentPWM) / PWM_MAX;
 
         // Determine desired pin state
         bool shouldBeHigh = (elapsed < onTimeMs);

@@ -24,7 +24,7 @@ public:
     virtual ~IDryer() = default;
 
     // Lifecycle
-    virtual void begin() = 0;
+    virtual void begin(uint32_t currentMillis) = 0;
     virtual void update(uint32_t currentMillis) = 0;
 
     // State control

@@ -81,12 +81,12 @@ private:
     void onStateEnter(DryerState newState, DryerState prevState, uint32_t currentMillis) {
         switch (newState) {
             case DryerState::READY:
-                heaterControl->stop();
+                heaterControl->stop(currentMillis);
                 pidController->reset();
                 break;
 
             case DryerState::RUNNING:
-                heaterControl->start();
+                heaterControl->start(currentMillis);
                 if (prevState == DryerState::READY) {
                     // Fresh start
                     startTime = currentMillis;
@@ -98,12 +98,12 @@ private:
                 break;
 
             case DryerState::PAUSED:
-                heaterControl->stop();
+                heaterControl->stop(currentMillis);
                 pausedTime = currentMillis;
                 break;
 
             case DryerState::FINISHED:
-                heaterControl->stop();
+                heaterControl->stop(currentMillis);
                 pidController->reset();
                 storage->clearRuntimeState();
                 if (soundEnabled && soundController) {
@@ -120,7 +120,7 @@ private:
                 break;
 
             case DryerState::POWER_RECOVERED:
-                heaterControl->stop();
+                heaterControl->stop(currentMillis);
                 break;
         }
     }
@@ -298,10 +298,10 @@ public:
         customPreset.maxOvershoot = PRESET_CUSTOM_OVERSHOOT;
     }
 
-    void begin() override {
+    void begin(uint32_t currentMillis) override {
         // Initialize all components
         sensorManager->begin();
-        heaterControl->begin();
+        heaterControl->begin(currentMillis);
         pidController->begin();
         safetyMonitor->begin();
         storage->begin();

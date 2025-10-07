@@ -60,7 +60,7 @@ public:
         stats.activePreset = activePreset;
     }
 
-    void begin() override {
+    void begin(uint32_t currentMillis) override {
         beginCallCount++;
     }
 

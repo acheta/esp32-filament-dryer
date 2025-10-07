@@ -130,7 +130,7 @@ constexpr uint32_t HEATER_PWM_PERIOD_MS = 5000;   // 5 second period
 constexpr float HEATER_PWM_FREQ = 1000.0 / HEATER_PWM_PERIOD_MS;  // 0.2 Hz (for reference only)
 
 constexpr uint8_t PWM_MIN = 0;
-constexpr uint8_t PWM_MAX = 255;
+constexpr uint8_t PWM_MAX = 100;  // Scale to 0-100 for simplicity, while using software PWM
 
 
 // ==================== PID Configuration ====================
