@@ -126,7 +126,7 @@ constexpr uint32_t POWER_RECOVERY_TIMEOUT = 300000; // 5 minutes
 
 // ==================== PWM Configuration ====================
 
-constexpr uint32_t HEATER_PWM_PERIOD_MS = 5000;   // 5 second period
+constexpr uint32_t HEATER_PWM_PERIOD_MS = 2000;   // 5 second period
 constexpr float HEATER_PWM_FREQ = 1000.0 / HEATER_PWM_PERIOD_MS;  // 0.2 Hz (for reference only)
 
 constexpr uint8_t PWM_MIN = 0;
@@ -142,9 +142,9 @@ struct PIDTuning {
     float kd;
 };
 
-constexpr PIDTuning PID_SOFT = {2.0, 0.5, 1.0};
-constexpr PIDTuning PID_NORMAL = {4.0, 1.0, 2.0};
-constexpr PIDTuning PID_STRONG = {6.0, 1.5, 3.0};
+constexpr PIDTuning PID_SOFT = {1.0, 0.2, 2.0};    // Very gentle
+constexpr PIDTuning PID_NORMAL = {2.0, 0.3, 3.0};  // Moderate
+constexpr PIDTuning PID_STRONG = {3.0, 0.5, 4.0};  // Still careful
 
 // PID control parameters
 constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.2;  // Low-pass filter coefficient

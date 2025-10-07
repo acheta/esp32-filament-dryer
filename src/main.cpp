@@ -584,7 +584,7 @@ void setup() {
     Serial.println("Preset: PLA (50°C, 4 hours)");
 
     // Set NORMAL PID profile
-    dryer->setPIDProfile(PIDProfile::NORMAL);
+    dryer->setPIDProfile(PIDProfile::STRONG);
     Serial.println("PID Profile: NORMAL");
 
     // Start the dryer
