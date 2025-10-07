@@ -26,17 +26,17 @@ public:
           emergencyStopped(false) {
     }
 
-    void begin() override {
+    void begin(uint32_t currentMillis) override {
         initialized = true;
     }
 
-    void start() override {
+    void start(uint32_t currentMillis) override {
         startCallCount++;
         running = true;
         emergencyStopped = false;
     }
 
-    void stop() override {
+    void stop(uint32_t currentMillis) override {
         stopCallCount++;
         running = false;
         pwmValue = 0;

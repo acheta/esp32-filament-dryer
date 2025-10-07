@@ -33,32 +33,20 @@ public:
           pinState(false) {
     }
 
-    void begin() override {
+    void begin(uint32_t currentMillis) override {
 #ifndef UNIT_TEST
         pinMode(pwmPin, OUTPUT);
         digitalWrite(pwmPin, LOW);
-
-        Serial.println("\n========== HeaterControl Software PWM Setup ==========");
-        Serial.print("Pin: GPIO");
-        Serial.println((int)pwmPin);
-        Serial.print("PWM Period: ");
-        Serial.print(PWM_PERIOD_MS);
-        Serial.println(" ms");
-        Serial.print("PWM Frequency: ");
-        Serial.print(1000.0 / PWM_PERIOD_MS, 2);
-        Serial.println(" Hz");
-        Serial.println("Mode: Software PWM (suitable for SSR)");
-        Serial.println("======================================================\n");
 #endif
     }
 
-    void start() override {
+    void start(uint32_t currentMillis) override {
         running = true;
-        cycleStartTime = millis();
-        lastUpdateTime = millis();
+        cycleStartTime = currentMillis;
+        lastUpdateTime =currentMillis;
     }
 
-    void stop() override {
+    void stop(uint32_t currentMillis) override {
         running = false;
         setPWM(0);
 #ifndef UNIT_TEST
@@ -80,6 +68,9 @@ public:
         if (!running) {
             value = 0;
         }
+
+
+
         currentPWM = constrain(value, PWM_MIN, PWM_MAX);
 
         // Don't update GPIO here - let update() handle timing
