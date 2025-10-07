@@ -147,8 +147,8 @@ constexpr PIDTuning PID_NORMAL = {2.0, 0.3, 3.0};  // Moderate
 constexpr PIDTuning PID_STRONG = {3.0, 0.5, 4.0};  // Still careful
 
 // PID control parameters
-constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.2;  // Low-pass filter coefficient
-constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;    // Start scaling within 5°C of max
+constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.7;  // Low-pass filter coefficient
+constexpr float PID_TEMP_SLOWDOWN_MARGIN = 15.0;    // Start scaling within 5°C of max
 
 // ==================== Preset Configurations ====================
 
