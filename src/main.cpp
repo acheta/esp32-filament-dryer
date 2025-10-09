@@ -585,7 +585,7 @@ void setup() {
 
     // Set NORMAL PID profile
     dryer->setPIDProfile(PIDProfile::STRONG);
-    Serial.println("PID Profile: NORMAL");
+    Serial.println("PID Profile: STRONG");
 
     // Start the dryer
     dryer->start();

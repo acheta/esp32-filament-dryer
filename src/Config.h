@@ -144,11 +144,11 @@ struct PIDTuning {
 
 constexpr PIDTuning PID_SOFT = {1.0, 0.2, 2.0};    // Very gentle
 constexpr PIDTuning PID_NORMAL = {2.0, 0.3, 3.0};  // Moderate
-constexpr PIDTuning PID_STRONG = {3.0, 0.5, 4.0};  // Still careful
+constexpr PIDTuning PID_STRONG = {4.5, 0.6, 4.0};  // Still careful
 
 // PID control parameters
-constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.7;  // Low-pass filter coefficient
-constexpr float PID_TEMP_SLOWDOWN_MARGIN = 15.0;    // Start scaling within 5°C of max
+constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.8;  // Low-pass filter coefficient
+constexpr float PID_TEMP_SLOWDOWN_MARGIN = 10.0;    // Start scaling within margin of max
 
 // ==================== Preset Configurations ====================
 
