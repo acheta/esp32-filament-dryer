@@ -14,6 +14,7 @@
  * - Temperature-aware slowdown (prevents overshoot by scaling output near max temp)
  * - Predictive cooling compensation (prevents undershoot during cooldown)
  * - Derivative on measurement (not error) to avoid setpoint kick
+ * - Output limited to PWM_MAX_PID_OUTPUT to prevent overpowering
  *
  * IMPORTANT: maxAllowedTemp should be set to (setpoint + maxOvershoot)
  *            Example: For 50°C setpoint with 10°C overshoot → maxAllowedTemp = 60°C
@@ -34,7 +35,7 @@ private:
     float integral;
     float lastInput;
     float filteredDerivative;
-    float coolingRate;  // NEW: Track cooling rate separately
+    float coolingRate;  // Track cooling rate separately
     uint32_t lastTime;
     bool firstRun;
 
@@ -42,7 +43,7 @@ private:
     static constexpr float DERIVATIVE_FILTER_ALPHA = PID_DERIVATIVE_FILTER_ALPHA;
     static constexpr float TEMP_SLOWDOWN_MARGIN = PID_TEMP_SLOWDOWN_MARGIN;
 
-    // NEW: Predictive cooling parameters
+    // Predictive cooling parameters
     static constexpr float COOLING_RATE_FILTER_ALPHA = 0.7;  // Filter for cooling rate
     static constexpr float PREDICTIVE_HORIZON_SEC = 10.0;    // Look ahead 10 seconds
     static constexpr float MIN_COOLING_RATE = -0.08;          // °C/s - only predict if cooling faster
@@ -60,7 +61,7 @@ public:
           ki(PID_NORMAL.ki),
           kd(PID_NORMAL.kd),
           outMin(PWM_MIN),
-          outMax(PWM_MAX),
+          outMax(PWM_MAX_PID_OUTPUT),  // Use PWM_MAX_PID_OUTPUT instead of PWM_MAX
           maxAllowedTemp(MAX_HEATER_TEMP),
           integral(0.0),
           lastInput(0.0),
@@ -90,7 +91,8 @@ public:
 
     void setLimits(float outMinVal, float outMaxVal) override {
         outMin = outMinVal;
-        outMax = outMaxVal;
+        // Cap the max value to PWM_MAX_PID_OUTPUT
+        outMax = (outMaxVal > PWM_MAX_PID_OUTPUT) ? PWM_MAX_PID_OUTPUT : outMaxVal;
     }
 
     void setMaxAllowedTemp(float maxTemp) override {
@@ -123,7 +125,7 @@ public:
         // Calculate error
         float error = setpoint - input;
 
-        // NEW: Predictive compensation for cooling
+        // Predictive compensation for cooling
         // If we're cooling down (negative rate) and above setpoint,
         // predict where we'll be in PREDICTIVE_HORIZON_SEC
         float predictedError = error;
@@ -245,6 +247,11 @@ public:
     // Debug getter
     float getCoolingRate() const {
         return coolingRate;
+    }
+
+    // Debug getter for actual output limits
+    float getOutputMax() const {
+        return outMax;
     }
 };
 

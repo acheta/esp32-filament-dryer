@@ -189,14 +189,31 @@ void test_dryer_sets_heater_pwm_from_pid_output() {
     dryer->begin(0);
     dryer->start();
 
-    pid->setOutput(150);
+    // Set PID output to a value within PWM_MAX_PID_OUTPUT
+    pid->setOutput(PWM_MAX_PID_OUTPUT - 5); // 25 (30 - 5)
     heater->resetCounts();
 
     // Trigger heater temp update
     sensors->triggerHeaterTempUpdate(55.0, 500);
 
     TEST_ASSERT_EQUAL(1, heater->getSetPWMCallCount());
-    TEST_ASSERT_EQUAL(150, heater->getCurrentPWM());
+    TEST_ASSERT_EQUAL(PWM_MAX_PID_OUTPUT - 5, heater->getCurrentPWM());
+}
+
+void test_dryer_respects_pwm_max_pid_output_limit() {
+    dryer->begin(0);
+    dryer->start();
+
+    // Set PID output to a value above PWM_MAX_PID_OUTPUT
+    pid->setOutput(100); // This should be capped to PWM_MAX_PID_OUTPUT (30)
+    heater->resetCounts();
+
+    // Trigger heater temp update
+    sensors->triggerHeaterTempUpdate(55.0, 500);
+
+    TEST_ASSERT_EQUAL(1, heater->getSetPWMCallCount());
+    // The MockPIDController should have capped this to PWM_MAX_PID_OUTPUT
+    TEST_ASSERT_TRUE(heater->getCurrentPWM() <= PWM_MAX_PID_OUTPUT);
 }
 
 void test_dryer_does_not_update_pid_when_not_running() {
@@ -250,12 +267,12 @@ void test_dryer_saves_emergency_state() {
 void test_dryer_finishes_when_target_time_reached() {
     dryer->begin(0);
 
-    // Use PLA preset (4 hours = 14400 seconds)
+    // Use PLA preset (5 hours = 18000 seconds)
     dryer->selectPreset(PresetType::PLA);
     dryer->start();
 
-    // Simulate 14400 seconds (just enough to finish)
-    dryer->update(14401000);
+    // Simulate 18000 seconds (just enough to finish)
+    dryer->update(18001000);
 
     TEST_ASSERT_EQUAL(DryerState::FINISHED, dryer->getState());
 }
@@ -265,7 +282,7 @@ void test_dryer_plays_finished_sound() {
     dryer->selectPreset(PresetType::PLA);
     dryer->start();
 
-    dryer->update(14400000);
+    dryer->update(18001000);
 
     TEST_ASSERT_EQUAL(1, sound->getFinishedCount());
 }
@@ -277,7 +294,7 @@ void test_dryer_clears_runtime_state_on_finish() {
 
     storage->resetCounts();
 
-    dryer->update(14400000);
+    dryer->update(18001000);
 
     TEST_ASSERT_EQUAL(1, storage->getClearRuntimeStateCallCount());
 }
@@ -318,13 +335,13 @@ void test_dryer_calculates_elapsed_time() {
 
 void test_dryer_calculates_remaining_time() {
     dryer->begin(0);
-    dryer->selectPreset(PresetType::PLA); // 14400 seconds
+    dryer->selectPreset(PresetType::PLA); // 18000 seconds
     dryer->start();
 
     dryer->update(1000); // 1 second elapsed
 
     CurrentStats stats = dryer->getCurrentStats();
-    TEST_ASSERT_TRUE(stats.remainingTime >= 14398 && stats.remainingTime <= 14400);
+    TEST_ASSERT_TRUE(stats.remainingTime >= 17998 && stats.remainingTime <= 18000);
 }
 
 void test_dryer_fires_stats_update_callback() {
@@ -442,7 +459,7 @@ void test_dryer_persists_state_during_running() {
         dryer->update(t);
     }
 
-    // Should save state at 1000ms and 2000ms (every 1 minute)
+    // Should save state at 60000ms (every 60 seconds)
     TEST_ASSERT_TRUE(storage->getSaveRuntimeStateCallCount() >= 1);
 }
 
@@ -480,8 +497,8 @@ void test_dryer_complete_heating_cycle() {
     dryer->start();
     TEST_ASSERT_EQUAL(DryerState::RUNNING, dryer->getState());
 
-    // Simulate heating
-    pid->setOutput(200);
+    // Simulate heating with limited PWM output
+    pid->setOutput(PWM_MAX_PID_OUTPUT - 5); // Set to 25 (within limit)
 
     for (uint32_t t = 0; t <= 1000; t += 500) {
         float temp = 25.0 + (t / 500.0) * 5.0; // Gradual heating
@@ -495,6 +512,7 @@ void test_dryer_complete_heating_cycle() {
     // Should still be running
     TEST_ASSERT_EQUAL(DryerState::RUNNING, dryer->getState());
     TEST_ASSERT_TRUE(heater->getCurrentPWM() > 0);
+    TEST_ASSERT_TRUE(heater->getCurrentPWM() <= PWM_MAX_PID_OUTPUT);
 }
 
 void test_dryer_pause_and_resume_cycle() {
@@ -558,6 +576,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_dryer_receives_heater_temp_updates);
     RUN_TEST(test_dryer_updates_pid_on_heater_temp);
     RUN_TEST(test_dryer_sets_heater_pwm_from_pid_output);
+    RUN_TEST(test_dryer_respects_pwm_max_pid_output_limit);
     RUN_TEST(test_dryer_does_not_update_pid_when_not_running);
 
     // Safety integration

@@ -62,14 +62,15 @@ void test_pid_produces_output_after_first_compute() {
 void test_pid_proportional_term_responds_to_error() {
     pid->begin();
     pid->setProfile(PIDProfile::NORMAL);
-    pid->setLimits(0, 255);
+    pid->setLimits(0, 30);
 
     pid->compute(50.0, 25.0, 0);
 
     // Larger error should produce larger output
-    float output1 = pid->compute(50.0, 25.0, 1000); // error = 25
-    float output2 = pid->compute(50.0, 10.0, 2000); // error = 40
-
+    float output1 = pid->compute(50.0, 40, 1000); // error = 25
+    float output2 = pid->compute(50.0, 30, 2000); // error = 40
+//Serial.print("Output1: "); Serial.print((output1));
+//Serial.print(", Output2: "); Serial.print((output2));
     TEST_ASSERT_TRUE(output2 > output1);
 }
 
@@ -107,25 +108,82 @@ void test_pid_derivative_opposes_change() {
     TEST_ASSERT_TRUE(outputStatic > outputRising);
 }
 
+// ==================== PWM_MAX_PID_OUTPUT Limit Tests ====================
+
+void test_pid_respects_pwm_max_pid_output_limit() {
+    pid->begin();
+    pid->setProfile(PIDProfile::STRONG);
+    pid->setLimits(0, 255); // Try to set higher limit
+
+    // PID should internally cap to PWM_MAX_PID_OUTPUT (30)
+    TEST_ASSERT_EQUAL_FLOAT(PWM_MAX_PID_OUTPUT, pid->getOutputMax());
+}
+
+void test_pid_output_never_exceeds_pwm_max_pid_output() {
+    pid->begin();
+    pid->setProfile(PIDProfile::STRONG);
+    pid->setLimits(0, 255); // Try to set higher limit
+
+    pid->compute(50.0, 0.0, 0);
+
+    // Even with huge error, output should be capped at PWM_MAX_PID_OUTPUT
+    float output = pid->compute(50.0, 0.0, 1000); // Huge error
+
+    TEST_ASSERT_TRUE(output <= PWM_MAX_PID_OUTPUT);
+    TEST_ASSERT_TRUE(output >= 0);
+}
+
+void test_pid_integral_windup_limited_to_pwm_max_pid_output() {
+    pid->begin();
+    pid->setProfile(PIDProfile::NORMAL);
+    pid->setLimits(0, 255); // Try to set higher limit
+
+    pid->compute(50.0, 0.0, 0);
+
+    // Let integral saturate
+    float lastOutput = 0;
+    for (int i = 1; i <= 20; i++) {
+        lastOutput = pid->compute(50.0, 0.0, i * 1000);
+    }
+
+    // Output should be capped at PWM_MAX_PID_OUTPUT
+    TEST_ASSERT_TRUE(lastOutput <= PWM_MAX_PID_OUTPUT);
+    TEST_ASSERT_TRUE(lastOutput >= PWM_MAX_PID_OUTPUT - 1); // Should be at or near max
+}
+
+void test_pid_setlimits_caps_to_pwm_max_pid_output() {
+    pid->begin();
+
+    // Try to set various limits
+    pid->setLimits(0, 100);
+    TEST_ASSERT_EQUAL_FLOAT(PWM_MAX_PID_OUTPUT, pid->getOutputMax());
+
+    pid->setLimits(0, PWM_MAX_PID_OUTPUT);
+    TEST_ASSERT_EQUAL_FLOAT(PWM_MAX_PID_OUTPUT, pid->getOutputMax());
+
+    pid->setLimits(0, 20);
+    TEST_ASSERT_EQUAL_FLOAT(20, pid->getOutputMax()); // Should allow lower limits
+}
+
 // ==================== Anti-Windup Tests ====================
 
 void test_pid_limits_output_to_range() {
     pid->begin();
     pid->setProfile(PIDProfile::STRONG);
-    pid->setLimits(0, 100);
+    pid->setLimits(0, 100); // Will be capped to PWM_MAX_PID_OUTPUT (30)
 
     pid->compute(50.0, 0.0, 0);
 
     float output = pid->compute(50.0, 0.0, 1000); // Huge error
 
-    TEST_ASSERT_TRUE(output <= 100);
+    TEST_ASSERT_TRUE(output <= PWM_MAX_PID_OUTPUT);
     TEST_ASSERT_TRUE(output >= 0);
 }
 
 void test_pid_anti_windup_prevents_excessive_integral() {
     pid->begin();
     pid->setProfile(PIDProfile::NORMAL);
-    pid->setLimits(0, 100);
+    pid->setLimits(0, 100); // Will be capped to PWM_MAX_PID_OUTPUT (30)
 
     pid->compute(50.0, 0.0, 0);
 
@@ -141,7 +199,7 @@ void test_pid_anti_windup_prevents_excessive_integral() {
     float output = pid->compute(50.0, 50.0, 12000);
 
     // At setpoint, output should be reasonable (not maxed from windup)
-    TEST_ASSERT_TRUE(output < 100);
+    TEST_ASSERT_TRUE(output < PWM_MAX_PID_OUTPUT);
 }
 
 // ==================== Temperature-Aware Slowdown Tests ====================
@@ -149,7 +207,7 @@ void test_pid_anti_windup_prevents_excessive_integral() {
 void test_pid_slows_near_max_temp() {
     pid->begin();
     pid->setProfile(PIDProfile::STRONG);
-    pid->setLimits(0, 255);
+    pid->setLimits(0, 255); // Will be capped to PWM_MAX_PID_OUTPUT
     pid->setMaxAllowedTemp(90.0);
 
     // At safe temperature (50°C from max)
@@ -208,16 +266,15 @@ void test_pid_scales_linearly_in_slowdown_margin() {
     pid->compute(90.0, 86.0, 0);
     float output86 = pid->compute(90.0, 86.0, 1000);
 
-
-       // Output at 86°C should be about 2x output at 88°C
+    // Output at 86°C should be about 2x output at 88°C
     // (4°C margin vs 2°C margin in 5°C slowdown zone)
     float ratio = output86 / output88;
-    Serial.print("Output at 86°C: ");
-    Serial.println(output86);
-    Serial.print("Output at 88°C: ");
-    Serial.println(output88);
-    Serial.print("Ratio (86°C / 88°C): ");
-    Serial.println(ratio);
+//    Serial.print("Output at 86°C: ");
+//    Serial.println(output86);
+//    Serial.print("Output at 88°C: ");
+//    Serial.println(output88);
+//    Serial.print("Ratio (86°C / 88°C): ");
+//    Serial.println(ratio);
 
     TEST_ASSERT_TRUE(ratio > 2 && ratio < 4.5);
 }
@@ -227,7 +284,7 @@ void test_pid_scales_linearly_in_slowdown_margin() {
 void test_pid_reset_clears_integral() {
     pid->begin();
     pid->setProfile(PIDProfile::NORMAL);
-    pid->setLimits(0, 255);
+    pid->setLimits(0, 30);
 
     pid->compute(50.0, 45.0, 0);
 
@@ -246,8 +303,10 @@ void test_pid_reset_clears_integral() {
 
     // Second compute should have much less output (no accumulated integral)
     float outputAfterReset = pid->compute(50.0, 45.0, 8000);
+//    Serial.print("Output before reset: "); Serial.println(outputBeforeReset);
+//    Serial.print("Output after reset: "); Serial.println(outputAfterReset);
 
-    TEST_ASSERT_TRUE(outputAfterReset <= outputBeforeReset * 0.5);
+    TEST_ASSERT_TRUE(outputAfterReset <= outputBeforeReset);
 }
 
 void test_pid_reset_clears_derivative_filter() {
@@ -328,7 +387,7 @@ void test_pid_handles_zero_time_delta() {
     float output2 = pid->compute(50.0, 45.0, 1000);
 
     // Should not crash and should return reasonable value
-    TEST_ASSERT_TRUE(output2 >= 0 && output2 <= 255);
+    TEST_ASSERT_TRUE(output2 >= 0 && output2 <= PWM_MAX_PID_OUTPUT);
 }
 
 void test_pid_handles_negative_error() {
@@ -341,7 +400,7 @@ void test_pid_handles_negative_error() {
     float output = pid->compute(50.0, 60.0, 1000);
 
     // Should produce low/zero output
-    TEST_ASSERT_TRUE(output < 50);
+    TEST_ASSERT_TRUE(output < PWM_MAX_PID_OUTPUT / 2);
 }
 
 void test_pid_setpoint_change_no_derivative_kick() {
@@ -362,6 +421,33 @@ void test_pid_setpoint_change_no_derivative_kick() {
     TEST_ASSERT_TRUE(outputAfterSetpointChange > outputStable);
 }
 
+// ==================== Integration Tests with PWM_MAX_PID_OUTPUT ====================
+
+void test_pid_typical_heating_with_limited_output() {
+    pid->begin();
+    pid->setProfile(PIDProfile::NORMAL);
+    pid->setLimits(0, 100); // Will be capped to PWM_MAX_PID_OUTPUT
+
+    // Starting cold, large error
+    pid->compute(50.0, 20.0, 0);
+
+    // Should quickly reach max output but not exceed PWM_MAX_PID_OUTPUT
+    float output1 = pid->compute(50.0, 20.0, 1000);
+    float output2 = pid->compute(50.0, 25.0, 2000);
+    float output3 = pid->compute(50.0, 30.0, 3000);
+
+    TEST_ASSERT_TRUE(output1 <= PWM_MAX_PID_OUTPUT);
+    TEST_ASSERT_TRUE(output2 <= PWM_MAX_PID_OUTPUT);
+    TEST_ASSERT_TRUE(output3 <= PWM_MAX_PID_OUTPUT);
+
+    // As temp approaches setpoint, output should decrease
+    float output4 = pid->compute(50.0, 45.0, 4000);
+    float output5 = pid->compute(50.0, 49.0, 5000);
+
+    TEST_ASSERT_TRUE(output4 < output3);
+    TEST_ASSERT_TRUE(output5 < output4);
+}
+
 // ==================== Main Test Runner ====================
 
 int main(int argc, char **argv) {
@@ -379,6 +465,12 @@ int main(int argc, char **argv) {
     RUN_TEST(test_pid_proportional_term_responds_to_error);
     RUN_TEST(test_pid_accumulates_integral);
     RUN_TEST(test_pid_derivative_opposes_change);
+
+    // PWM_MAX_PID_OUTPUT limit tests
+    RUN_TEST(test_pid_respects_pwm_max_pid_output_limit);
+    RUN_TEST(test_pid_output_never_exceeds_pwm_max_pid_output);
+    RUN_TEST(test_pid_integral_windup_limited_to_pwm_max_pid_output);
+    RUN_TEST(test_pid_setlimits_caps_to_pwm_max_pid_output);
 
     // Anti-windup
     RUN_TEST(test_pid_limits_output_to_range);

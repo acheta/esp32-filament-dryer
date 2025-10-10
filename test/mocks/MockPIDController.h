@@ -2,6 +2,7 @@
 #define MOCK_PID_CONTROLLER_H
 
 #include "../../src/interfaces/IPIDController.h"
+#include "../../src/Config.h"
 
 class MockPIDController : public IPIDController {
 private:
@@ -23,7 +24,7 @@ public:
         : initialized(false),
           currentProfile(PIDProfile::NORMAL),
           outputMin(0),
-          outputMax(255),
+          outputMax(PWM_MAX_PID_OUTPUT),  // Use PWM_MAX_PID_OUTPUT as default
           maxTemp(90.0),
           fixedOutput(0),
           computeCallCount(0),
@@ -43,7 +44,8 @@ public:
 
     void setLimits(float outMin, float outMax) override {
         outputMin = outMin;
-        outputMax = outMax;
+        // Cap the max value to PWM_MAX_PID_OUTPUT
+        outputMax = (outMax > PWM_MAX_PID_OUTPUT) ? PWM_MAX_PID_OUTPUT : outMax;
     }
 
     void setMaxAllowedTemp(float maxTemp) override {
@@ -67,7 +69,10 @@ public:
     }
 
     // Test helpers
-    void setOutput(float output) { fixedOutput = output; }
+    void setOutput(float output) {
+        fixedOutput = output;
+    }
+
     bool isInitialized() const { return initialized; }
     PIDProfile getProfile() const { return currentProfile; }
     float getOutputMin() const { return outputMin; }
@@ -82,6 +87,13 @@ public:
     void resetCounts() {
         computeCallCount = 0;
         resetCallCount = 0;
+    }
+
+    // Helper function to constrain values (matching real PID behavior)
+    float constrain(float value, float min, float max) const {
+        if (value < min) return min;
+        if (value > max) return max;
+        return value;
     }
 };
 
