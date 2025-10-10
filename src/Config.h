@@ -48,9 +48,9 @@ constexpr uint8_t I2C_SCL_PIN = 9;         // Hardware I2C (shares with BOOT!)
 // constexpr uint8_t I2C_SCL_PIN = 7;      // Software I2C (was SS)
 
 // Buttons - Use analog-capable pins with internal pull-ups
-constexpr uint8_t BUTTON_SET_PIN = 0;      // A0
-constexpr uint8_t BUTTON_UP_PIN = 1;       // A1
-constexpr uint8_t BUTTON_DOWN_PIN = 2;     // A2
+constexpr uint8_t BUTTON_SET_PIN = 5;      // GPIO5
+constexpr uint8_t BUTTON_UP_PIN = 6;       // GPIO6
+constexpr uint8_t BUTTON_DOWN_PIN = 7;     // GPIO7
 
 // Buzzer
 constexpr uint8_t BUZZER_PIN = 3;          // A3
@@ -83,9 +83,9 @@ constexpr uint8_t I2C_SDA_PIN = 8;         // Default hardware I2C SDA
 constexpr uint8_t I2C_SCL_PIN = 9;         // Default hardware I2C SCL
 
 // Buttons (with internal pull-ups)
-constexpr uint8_t BUTTON_SET_PIN = 1;      // not implemented/tested
-constexpr uint8_t BUTTON_UP_PIN = 2;       // not implemented/tested
-constexpr uint8_t BUTTON_DOWN_PIN = 42;    // not implemented/tested
+constexpr uint8_t BUTTON_SET_PIN = 5;      // GPIO5
+constexpr uint8_t BUTTON_UP_PIN = 6;       // GPIO6
+constexpr uint8_t BUTTON_DOWN_PIN = 7;     // GPIO7
 
 // Buzzer
 constexpr uint8_t BUZZER_PIN = 26;         // not implemented/tested
@@ -132,6 +132,7 @@ constexpr float HEATER_PWM_FREQ = 1000.0 / HEATER_PWM_PERIOD_MS;  // 0.2 Hz (for
 constexpr uint8_t PWM_MIN = 0;
 constexpr uint8_t PWM_MAX = 100;  // Scale to 0-100 for simplicity, while using software PWM
 constexpr uint8_t PWM_MAX_PID_OUTPUT = 30;  // The heater is too powerful with thermal momentum - limit max PID output to 30%
+
 
 
 // ==================== PID Configuration ====================
@@ -185,7 +186,15 @@ constexpr uint32_t WATCHDOG_TIMEOUT = 10000;  // 10 seconds
 // ==================== Display Configuration ====================
 
 constexpr uint8_t DISPLAY_WIDTH = 128;
-constexpr uint8_t DISPLAY_HEIGHT = 64;
+constexpr uint8_t DISPLAY_HEIGHT = 32;
 constexpr uint8_t DISPLAY_FONT_SIZE = 1;
+
+// Button timing
+constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
+constexpr uint32_t BUTTON_CLICK_MS = 400;
+constexpr uint32_t BUTTON_LONG_PRESS_MS = 1000;
+
+// UI timing
+constexpr uint32_t MENU_INACTIVITY_TIMEOUT_MS = 30000;  // 30 seconds
 
 #endif

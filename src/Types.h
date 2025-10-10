@@ -59,6 +59,7 @@ enum class MenuPath {
     CUSTOM_TIME,
     CUSTOM_OVERSHOOT,
     CUSTOM_SAVE,
+    CUSTOM_COPY_PLA,
     CUSTOM_BACK,
     PID_PROFILE,
     PID_SOFT,
@@ -67,6 +68,7 @@ enum class MenuPath {
     SOUND,
     SOUND_ON,
     SOUND_OFF,
+    SYSTEM_INFO,
     BACK
 };
 
