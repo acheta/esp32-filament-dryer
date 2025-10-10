@@ -393,23 +393,27 @@ private:
         display->clear();
 
         if (menuController->isInEditMode()) {
-            // Edit mode: show item label and value
+            // Edit mode: show item label and value (centered for 32px display)
             MenuItem item = menuController->getEditingItem();
             int value = menuController->getEditValue();
 
-            // Center-aligned
+            // Center-aligned, vertically centered for 32px display
             display->setTextSize(1);
-            display->setCursor(0, 8);
+            display->setCursor(0, 4);  // 4px from top
             display->print(item.label);
 
-            display->setCursor(0, 20);
+            // 4px spacing
+            display->setCursor(0, 16);  // 8px label + 4px spacing = 12px from top
             display->setTextSize(2);
             display->print(String(value));
             display->setTextSize(1);
             display->print(item.unit);
 
-        } else {
+        }
+
+        else {
             // Navigation mode: show menu items
+            // Layout for 32px height: prev(8px) + current(16px) + next(8px)
             std::vector<MenuItem> items = menuController->getCurrentMenuItems();
             int selection = menuController->getCurrentSelection();
 
@@ -419,7 +423,7 @@ private:
             }
 
             // Show 3 items: prev, current (large), next
-            // Left-aligned, endless loop
+            // Endless loop scrolling
 
             int prevIndex = selection - 1;
             if (prevIndex < 0) prevIndex = items.size() - 1;
@@ -427,7 +431,7 @@ private:
             int nextIndex = selection + 1;
             if (nextIndex >= (int)items.size()) nextIndex = 0;
 
-            // Previous item (small, top)
+            // Previous item (small, top) - Y=0, 8px height
             display->setTextSize(1);
             display->setCursor(0, 0);
             display->print(items[prevIndex].label);
@@ -439,9 +443,9 @@ private:
                 display->print(items[prevIndex].unit);
             }
 
-            // Current item (large, middle)
+            // Current item (large, middle) - Y=8, 16px height (no gap)
             display->setTextSize(2);
-            display->setCursor(0, 12);
+            display->setCursor(0, 8);
             display->print(items[selection].label);
 
             // For value edit items, show current value
@@ -454,9 +458,9 @@ private:
                 display->print(items[selection].unit);
             }
 
-            // Next item (small, bottom)
+            // Next item (small, bottom) - Y=24, 8px height
             display->setTextSize(1);
-            display->setCursor(0, 28);
+            display->setCursor(0, 24);
             display->print(items[nextIndex].label);
 
             // For value edit items, show current value
