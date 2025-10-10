@@ -179,12 +179,12 @@
 
 #### **MenuController**
 - Isolated menu state machine
-- Handles navigation: `handleAction(ENTER, UP, DOWN, BACK)`
+- Handles navigation: `handleAction(ENTER, UP, DOWN, SAVE, CANCEL)`
 - Maintains menu tree structure and current position
 - **Handles value editing** for custom preset parameters
 - Fires `MenuSelectionCallback` when user confirms choice or value
 - **Custom preset editing flow**:
-  ```
+```
   User enters Custom preset menu
     ├─> Navigate to "Temp" → ENTER → edit mode
     │     ├─> UP/DOWN adjusts value (±1°C)
@@ -202,28 +202,118 @@
     │     ├─> UP/DOWN adjusts value (±1°C)
     │     └─> ENTER confirms → MenuSelectionCallback(CUSTOM_OVERSHOOT, newValue)
     │
-    └─> Navigate to "Save" → ENTER
-          └─> MenuSelectionCallback(SAVE_CUSTOM_PRESET, 0)
-              └─> UIController calls Dryer.saveCustomPreset()
-                  └─> Dryer calls SettingsStorage.saveCustomPreset()
-  ```
-- **Menu item structure**:
-  ```cpp
-  struct MenuItem {
-      String label;
-      MenuItemType type;  // SUBMENU, VALUE_EDIT, ACTION
-      MenuPath path;      // Unique identifier for callback
-      
-      // For VALUE_EDIT type
-      int currentValue;
-      int minValue;
-      int maxValue;
-      int step;
-      String unit;  // "°C", "min", etc.
-  };
-  ```
+    ├─> Navigate to "Save" → ENTER
+    │     └─> MenuSelectionCallback(SAVE_CUSTOM_PRESET, 0)
+    │         └─> UIController calls Dryer.saveCustomPreset()
+    │             └─> Dryer calls SettingsStorage.saveCustomPreset()
+    │
+    └─> Navigate to "Back" → ENTER
+          └─> Returns to previous menu
+```
+
+* complete menu tree: 
+```
+HOME screen - showing current state and temps
+  - Long press SET - pause/resume
+  - short press UP/DOWN - toggle between stats screens
+  - Short press SET - enters main menu
+    - Status
+      - Short press SET to enter submenu
+        - Start/resume (if READY/PAUSED)
+          - Short press SET to start
+        - Pause (if RUNNING)
+          - Short press SET to pause
+        - Ready (if not READY)
+          - Short press SET to reset into READY
+    - Select Preset
+      - Short press SET to enter submenu - dynamically based on dryer's preset configuration i.e.
+        - PLA (temp, time, overshoot)
+          - Short press SET to select and go level up
+        - PETG (temp, time, overshoot)
+          - Short press SET to select and go level up
+        - ABS (temp, time, overshoot)
+          - Short press SET to select and go level up
+        - Custom (temp, time, overshoot)
+          - Short press SET to select and go level up
+        - long press SET to go level up anytime
+        - Back
+          - Short press SET to go level up
+    - Edit Custom preset
+      - Short press SET to enter submenu
+        - Temp (current custom preset value)
+          - Short press SET to edit
+            - UP/DOWN to adjust (±1°C)
+            - Short press SET to confirm and save value
+        - Time (current custom preset value)
+          - Short press SET to edit
+            - UP/DOWN to adjust (±10 min)
+            - Short press SET to confirm and save value
+        - Max Overshoot (current custom preset value)
+          - Short press SET to edit
+            - UP/DOWN to adjust (±1°C)
+            - Short press SET to confirm and save value
+        - Copy from PLA
+          - Short press SET to copy values from PLA preset to Custom and go level up
+        - Back
+          - Short press SET to go level up
+        - long press SET to go level up anytime
+    - PID (current pid profile name)
+    - Short press SET to enter submenu
+      - UP/DOWN to navigate
+        - SOFT
+          - Short press SET to select and save profile
+        - NORMAL
+          - Short press SET to select and save profile
+        - STRONG
+          - Short press SET to select and save profile
+        - Back
+          - Short press SET to go level up
+        - long press SET to go level up anytime
+    - Sound: On/Off (current value)
+      - Short press SET to toggle and save
+    - System info
+      - Short press SET to enter submenu
+      - UP/DOWN to navigate system config
+        - STATE_SAVE_INTERVAL: current value
+        - PID_UPDATE_INTERVAL: current value
+        - MIN_TEMP: current value
+        - MAX_BOX_TEMP: current value
+        - MAX_HEATER_TEMP: current value
+        - DEFAULT_MAX_OVERSHOOT: current value
+        - MAX_TIME_SECONDS: current value
+        - MIN_TIME_SECONDS: current value
+        - HEATER_PWM_PERIOD_MS: current value
+        - PWM_MAX_PID_OUTPUT: current value
+        - Back
+          - Short press SET to go level up
+        - long press SET to go level up anytime
+   - 
+```
+
+- **Menu item display layouts**:
+
+Submenu/list selection, left-aligned, submenu is endless loop
+```
+prevItem, font size 1
+currentItem, font size 2
+nextItem, font size 1
+```
+
+Value edit, center-aligned
+```
+Item label, font size 1
+4px spacing
+currentValue + unit, font size 2
+```
+
+Info list, left-aligned
+```
+Item label, font size 1
+4px spacing
+Item value, font size 2
+``````
+
 - Returns current menu items for display rendering
-- `reset()` to return to root menu
 - **Does NOT**: Execute actions, persist data, know about Dryer internals
 
 #### **ButtonManager**
@@ -280,31 +370,6 @@ Button Press (hardware)
                           └─> Calls appropriate Dryer method
                               └─> Dryer updates internal state
                                   └─> StatsUpdateCallback → Display
-```
-
-#### Custom Preset Value Flow
-```
-User navigates to Custom > Temp > ENTER (enters edit mode)
-  └─> MenuController enters VALUE_EDIT mode
-      └─> Display shows: "Temp: 50°C" (current value, blinking)
-      
-User presses UP
-  └─> ButtonManager → UIController → MenuController.handleAction(UP)
-      └─> MenuController increments value (50 → 51)
-          └─> Display updates: "Temp: 51°C"
-
-User presses ENTER (confirms)
-  └─> MenuController exits edit mode
-      └─> MenuSelectionCallback(CUSTOM_TEMP, 51)
-          └─> UIController receives callback
-              └─> Calls Dryer.setCustomPresetTemp(51)
-                  └─> Dryer updates customPreset.targetTemp = 51
-
-User navigates to Custom > Save > ENTER
-  └─> MenuSelectionCallback(SAVE_CUSTOM_PRESET, 0)
-      └─> UIController calls Dryer.saveCustomPreset()
-          └─> Dryer calls SettingsStorage.saveCustomPreset(customPreset)
-              └─> Writes to /settings.json
 ```
 
 #### Emergency Flow
