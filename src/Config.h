@@ -131,6 +131,7 @@ constexpr float HEATER_PWM_FREQ = 1000.0 / HEATER_PWM_PERIOD_MS;  // 0.2 Hz (for
 
 constexpr uint8_t PWM_MIN = 0;
 constexpr uint8_t PWM_MAX = 100;  // Scale to 0-100 for simplicity, while using software PWM
+constexpr uint8_t PWM_MAX_PID_OUTPUT = 30;  // The heater is too powerful with thermal momentum - limit max PID output to 30%
 
 
 // ==================== PID Configuration ====================
@@ -154,17 +155,22 @@ constexpr float PID_TEMP_SLOWDOWN_MARGIN = 10.0;    // Start scaling within marg
 
 // PLA preset
 constexpr float PRESET_PLA_TEMP = 50.0;
-constexpr uint32_t PRESET_PLA_TIME = 14400;  // seconds = 4 hours
+constexpr uint32_t PRESET_PLA_TIME = 5*60*60; // 5 hours
 constexpr float PRESET_PLA_OVERSHOOT = 10.0;
 
 // PETG preset
 constexpr float PRESET_PETG_TEMP = 65.0;
-constexpr uint32_t PRESET_PETG_TIME = 18000; // 5 hours
+constexpr uint32_t PRESET_PETG_TIME = 5*60*60; // 5 hours
 constexpr float PRESET_PETG_OVERSHOOT = 10.0;
+
+// ABS preset
+constexpr float PRESET_ABS_TEMP = 75.0;
+constexpr uint32_t PRESET_ABS_TIME = 5*60*60; // 5 hours
+constexpr float PRESET_ABS_OVERSHOOT = 10.0;
 
 // Default custom preset
 constexpr float PRESET_CUSTOM_TEMP = 50.0;
-constexpr uint32_t PRESET_CUSTOM_TIME = 14400;
+constexpr uint32_t PRESET_CUSTOM_TIME = 5*60*60; // 5 hours
 constexpr float PRESET_CUSTOM_OVERSHOOT = 10.0;
 
 // ==================== Storage Configuration ====================
