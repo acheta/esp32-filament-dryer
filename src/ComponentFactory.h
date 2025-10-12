@@ -6,10 +6,12 @@
 #include "interfaces/IBoxTempHumiditySensor.h"
 #include "interfaces/IDryer.h"
 #include "interfaces/IDisplay.h"
+#include "interfaces/IFanControl.h"
 #include "sensors/SensorManager.h"
 #include "sensors/HeaterTempSensor.h"
 #include "sensors/BoxTempHumiditySensor.h"
 #include "userInterface/OLEDDisplay.h"
+#include "control/FanControl.h"
 #include "Dryer.h"
 #include "Config.h"
 
@@ -19,6 +21,7 @@
 #include "test/mocks/MockBoxTempHumiditySensor.h"
 #include "test/mocks/MockDryer.h"
 #include "test/mocks/MockDisplay.h"
+#include "test/mocks/MockFanControl.h"
 #endif
 
 /**
@@ -137,6 +140,30 @@ public:
 };
 #endif
 
+// ==================== Fan Control Factory ====================
+
+class IFanControlFactory {
+public:
+    virtual IFanControl* create() = 0;
+    virtual ~IFanControlFactory() = default;
+};
+
+class ProductionFanControlFactory : public IFanControlFactory {
+public:
+    IFanControl* create() override {
+        return new FanControl(FAN_PIN);
+    }
+};
+
+#ifdef UNIT_TEST
+class MockFanControlFactory : public IFanControlFactory {
+public:
+    IFanControl* create() override {
+        return new MockFanControl();
+    }
+};
+#endif
+
 // ==================== Dryer Factory ====================
 
 class IDryerFactory {
@@ -147,7 +174,8 @@ public:
         IPIDController* pid,
         ISafetyMonitor* safety,
         ISettingsStorage* storage,
-        ISoundController* sound = nullptr
+        ISoundController* sound = nullptr,
+        IFanControl* fan = nullptr
     ) = 0;
     virtual ~IDryerFactory() = default;
 };
@@ -160,9 +188,10 @@ public:
         IPIDController* pid,
         ISafetyMonitor* safety,
         ISettingsStorage* storage,
-        ISoundController* sound = nullptr
+        ISoundController* sound = nullptr,
+        IFanControl* fan = nullptr
     ) override {
-        return new Dryer(sensors, heater, pid, safety, storage, sound);
+        return new Dryer(sensors, heater, pid, safety, storage, sound, fan);
     }
 };
 
@@ -175,7 +204,8 @@ public:
         IPIDController* pid,
         ISafetyMonitor* safety,
         ISettingsStorage* storage,
-        ISoundController* sound = nullptr
+        ISoundController* sound = nullptr,
+        IFanControl* fan = nullptr
     ) override {
         // Ignore all dependencies and return mock
         (void)sensors;
@@ -184,6 +214,7 @@ public:
         (void)safety;
         (void)storage;
         (void)sound;
+        (void)fan;
         return new MockDryer();
     }
 };
@@ -233,6 +264,14 @@ public:
         return new MockDisplayFactory();
 #else
         return new ProductionDisplayFactory();
+#endif
+    }
+
+    static IFanControlFactory* getFanControlFactory() {
+#ifdef UNIT_TEST
+        return new MockFanControlFactory();
+#else
+        return new ProductionFanControlFactory();
 #endif
     }
 };

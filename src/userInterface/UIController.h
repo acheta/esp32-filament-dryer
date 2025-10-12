@@ -30,12 +30,11 @@ private:
 
     UIMode currentMode;
 
-    // HOME screen stats cycling
+    // HOME screen stats cycling (removed BOX_HUMIDITY and PID_OUTPUT)
     enum class StatsScreen {
-        BOX_TEMP,      // Default: large box temp
-        REMAINING,     // Large remaining time
-        HEATER_TEMP,   // Large heater temp
-        PID_OUTPUT     // Large PID output
+        BOX_TEMP,      // Default: large box temp with "B:" prefix
+        REMAINING,     // Large remaining time in h:mm:ss format
+        HEATER_TEMP    // Large heater temp with "H:" prefix
     };
 
     StatsScreen currentStatsScreen;
@@ -47,6 +46,9 @@ private:
     // Last stats for display
     CurrentStats lastStats;
 
+    // Dirty flag for display optimization
+    bool displayNeedsUpdate;
+
     void setupButtonCallbacks() {
         if (!buttonManager) {
             Serial.println("ERROR: Cannot setup button callbacks - buttonManager is null!");
@@ -57,7 +59,8 @@ private:
         // SET button
         buttonManager->registerButtonCallback(ButtonType::SET,
             [this](ButtonEvent event) {
-                lastMenuActivity = millis();
+                lastMenuActivity = millis();  // Reset timeout on ANY button press
+                displayNeedsUpdate = true;
 
                 if (currentMode == UIMode::HOME) {
                     if (event == ButtonEvent::SINGLE_CLICK) {
@@ -90,7 +93,8 @@ private:
         // UP button
         buttonManager->registerButtonCallback(ButtonType::UP,
             [this](ButtonEvent event) {
-                lastMenuActivity = millis();
+                lastMenuActivity = millis();  // Reset timeout
+                displayNeedsUpdate = true;
 
                 if (event == ButtonEvent::SINGLE_CLICK) {
                     if (currentMode == UIMode::HOME) {
@@ -109,7 +113,8 @@ private:
         // DOWN button
         buttonManager->registerButtonCallback(ButtonType::DOWN,
             [this](ButtonEvent event) {
-                lastMenuActivity = millis();
+                lastMenuActivity = millis();  // Reset timeout
+                displayNeedsUpdate = true;
 
                 if (event == ButtonEvent::SINGLE_CLICK) {
                     if (currentMode == UIMode::HOME) {
@@ -139,6 +144,7 @@ private:
         dryer->registerStatsUpdateCallback(
             [this](const CurrentStats& stats) {
                 lastStats = stats;
+                displayNeedsUpdate = true;  // Mark display dirty on stats update
             }
         );
     }
@@ -147,10 +153,12 @@ private:
         currentMode = UIMode::MENU;
         menuController->reset();
         lastMenuActivity = millis();
+        displayNeedsUpdate = true;
     }
 
     void exitMenu() {
         currentMode = UIMode::HOME;
+        displayNeedsUpdate = true;
     }
 
     void handleHomeLongPress() {
@@ -163,6 +171,7 @@ private:
         } else if (state == DryerState::READY || state == DryerState::POWER_RECOVERED) {
             dryer->start();
         }
+        displayNeedsUpdate = true;
     }
 
     void cycleStatsScreen(bool forward) {
@@ -170,20 +179,23 @@ private:
 
         if (forward) {
             current++;
-            if (current > (int)StatsScreen::PID_OUTPUT) {
+            if (current > (int)StatsScreen::HEATER_TEMP) {
                 current = 0;
             }
         } else {
             current--;
             if (current < 0) {
-                current = (int)StatsScreen::PID_OUTPUT;
+                current = (int)StatsScreen::HEATER_TEMP;
             }
         }
 
         currentStatsScreen = (StatsScreen)current;
+        displayNeedsUpdate = true;
     }
 
     void handleMenuSelection(MenuPath path, int value) {
+        displayNeedsUpdate = true;
+
         switch (path) {
             case MenuPath::STATUS_START:
                 dryer->start();
@@ -286,6 +298,15 @@ private:
         }
     }
 
+    String getPresetAbbreviation(PresetType preset) const {
+        switch (preset) {
+            case PresetType::PLA: return "PLA";
+            case PresetType::PETG: return "PETG";
+            case PresetType::CUSTOM: return "CUST";
+            default: return "???";
+        }
+    }
+
     void renderHomeScreen() {
         display->clear();
 
@@ -300,91 +321,96 @@ private:
             case DryerState::POWER_RECOVERED: stateChar = 'P'; break;
         }
 
-        // Line 1: State indicator (top-left, small)
+        // Line 1.1 (Y=0): State indicator (left) + Preset name (right)
         display->setCursor(0, 0);
         display->setTextSize(1);
         display->print(String(stateChar));
 
-        // Line 1: Main value (large, centered)
-        display->setTextSize(2);
-        display->setCursor(24, 0);
+        // Preset name in top-right corner
+        display->setCursor(128 - (4 * 6), 0);  // 4 chars * 6 pixels wide
+        display->print(getPresetAbbreviation(lastStats.activePreset));
 
+        // Lines 1.2 + 2 (Y=8, spanning 16px height): Main value with prefix
         switch (currentStatsScreen) {
             case StatsScreen::BOX_TEMP:
+                // Show "B:" label on line 1.2
+                display->setCursor(0, 8);
+                display->setTextSize(1);
+                display->print("B:");
+
+                // Show temperature value (large)
+                display->setTextSize(2);
+                display->setCursor(14, 0);
                 display->print(String(lastStats.boxTemp, 1));
                 display->setTextSize(1);
                 display->print("C");
                 break;
 
-            case StatsScreen::REMAINING:
-                {
-                    uint32_t remainMin = lastStats.remainingTime / 60;
-                    display->print(String(remainMin));
-                    display->setTextSize(1);
-                    display->print("m");
-                }
-                break;
-
             case StatsScreen::HEATER_TEMP:
+                // Show "H:" label on line 1.2
+                display->setCursor(0, 8);
+                display->setTextSize(1);
+                display->print("H:");
+
+                // Show temperature value (large)
+                display->setTextSize(2);
+                display->setCursor(14, 0);
                 display->print(String(lastStats.currentTemp, 1));
                 display->setTextSize(1);
                 display->print("C");
                 break;
 
-            case StatsScreen::PID_OUTPUT:
-                display->print(String((int)lastStats.pwmOutput));
-                display->setTextSize(1);
-                display->print("%");
+            case StatsScreen::REMAINING:
+                // Show remaining time in h:mm:ss format (large)
+                display->setTextSize(2);
+                display->setCursor(14, 0);
+                {
+                    uint32_t hrs = lastStats.remainingTime / 3600;
+                    uint32_t mins = (lastStats.remainingTime % 3600) / 60;
+                    uint32_t secs = lastStats.remainingTime % 60;
+
+                    display->print(String(hrs));
+                    display->print(":");
+                    if (mins < 10) display->print("0");
+                    display->print(String(mins));
+                    display->print(":");
+                    if (secs < 10) display->print("0");
+                    display->print(String(secs));
+                }
                 break;
         }
 
-        // Line 1: Target temp (if running/paused, right side)
+        // Line 2 (Y=16): Remaining time countdown (left) + Heater temp (right)
         if (lastStats.state == DryerState::RUNNING ||
             lastStats.state == DryerState::PAUSED) {
             display->setTextSize(1);
-            display->setCursor(90, 0);
-            display->print("/");
-            display->print(String(lastStats.targetTemp, 0));
-            display->print("C");
-        }
+            display->setCursor(0, 16);
 
-        // Line 2: Timer and PWM (if running/paused)
-        display->setTextSize(1);
-        display->setCursor(0, 16);
-
-        if (lastStats.state == DryerState::RUNNING ||
-            lastStats.state == DryerState::PAUSED) {
-            // Elapsed time
-            uint32_t elapsedMin = lastStats.elapsedTime / 60;
-            uint32_t elapsedSec = lastStats.elapsedTime % 60;
-            display->print(String(elapsedMin));
-            display->print(":");
-            if (elapsedSec < 10) display->print("0");
-            display->print(String(elapsedSec));
-
-            display->print(" /");
+            // Remaining time as mm:ss
             uint32_t remainMin = lastStats.remainingTime / 60;
+            uint32_t remainSec = lastStats.remainingTime % 60;
             display->print(String(remainMin));
-            display->print("m");
+            display->print(":");
+            if (remainSec < 10) display->print("0");
+            display->print(String(remainSec));
 
-            // PWM
-            display->print(" P:");
-            display->print(String((int)lastStats.pwmOutput));
-        } else {
-            // Show heater temp when not running
-            display->print("Heater:");
+            // Heater temp on the right
+            display->setCursor(128 - (8 * 6), 16);  // Approx "H:51.2C" = 8 chars
+            display->print("H:");
             display->print(String(lastStats.currentTemp, 1));
             display->print("C");
         }
 
-        // Line 3: Box data (always shown, smaller)
-        display->setCursor(0, 24);
+        // Line 3 (Y=24): "B:xx.xC xx% /xx°C" (box temp + humidity + target)
         display->setTextSize(1);
+        display->setCursor(0, 24);
         display->print("B:");
         display->print(String(lastStats.boxTemp, 1));
         display->print("C ");
         display->print(String(lastStats.boxHumidity, 0));
-        display->print("%");
+        display->print("% /");
+        display->print(String(lastStats.targetTemp, 0));
+        display->print("C");
 
         display->display();
     }
@@ -393,27 +419,26 @@ private:
         display->clear();
 
         if (menuController->isInEditMode()) {
-            // Edit mode: show item label and value (centered for 32px display)
+            // Edit mode: show item label and value (centered)
             MenuItem item = menuController->getEditingItem();
             int value = menuController->getEditValue();
 
-            // Center-aligned, vertically centered for 32px display
             display->setTextSize(1);
-            display->setCursor(0, 4);  // 4px from top
+            display->setCursor(0, 4);
             display->print(item.label);
 
-            // 4px spacing
-            display->setCursor(0, 16);  // 8px label + 4px spacing = 12px from top
+            display->setCursor(0, 16);
             display->setTextSize(2);
             display->print(String(value));
             display->setTextSize(1);
             display->print(item.unit);
-
         }
-
+        else if (menuController->getCurrentMenuPath() == MenuPath::SYSTEM_INFO) {
+            // System info: show as scrollable label + value list
+            renderSystemInfoScreen();
+        }
         else {
             // Navigation mode: show menu items
-            // Layout for 32px height: prev(8px) + current(16px) + next(8px)
             std::vector<MenuItem> items = menuController->getCurrentMenuItems();
             int selection = menuController->getCurrentSelection();
 
@@ -423,32 +448,28 @@ private:
             }
 
             // Show 3 items: prev, current (large), next
-            // Endless loop scrolling
-
             int prevIndex = selection - 1;
             if (prevIndex < 0) prevIndex = items.size() - 1;
 
             int nextIndex = selection + 1;
             if (nextIndex >= (int)items.size()) nextIndex = 0;
 
-            // Previous item (small, top) - Y=0, 8px height
+            // Previous item (small, top) - Y=0
             display->setTextSize(1);
             display->setCursor(0, 0);
             display->print(items[prevIndex].label);
 
-            // For value edit items, show current value
             if (items[prevIndex].type == MenuItemType::VALUE_EDIT) {
                 display->print(": ");
                 display->print(String(items[prevIndex].currentValue));
                 display->print(items[prevIndex].unit);
             }
 
-            // Current item (large, middle) - Y=8, 16px height (no gap)
+            // Current item (large, middle) - Y=8
             display->setTextSize(2);
             display->setCursor(0, 8);
             display->print(items[selection].label);
 
-            // For value edit items, show current value
             if (items[selection].type == MenuItemType::VALUE_EDIT) {
                 display->setTextSize(1);
                 display->print(": ");
@@ -458,17 +479,50 @@ private:
                 display->print(items[selection].unit);
             }
 
-            // Next item (small, bottom) - Y=24, 8px height
+            // Next item (small, bottom) - Y=24
             display->setTextSize(1);
             display->setCursor(0, 24);
             display->print(items[nextIndex].label);
 
-            // For value edit items, show current value
             if (items[nextIndex].type == MenuItemType::VALUE_EDIT) {
                 display->print(": ");
                 display->print(String(items[nextIndex].currentValue));
                 display->print(items[nextIndex].unit);
             }
+        }
+
+        display->display();
+    }
+
+    void renderSystemInfoScreen() {
+        // System info displays as: label (line 1) + value+unit (line 2, large)
+        std::vector<MenuItem> items = menuController->getCurrentMenuItems();
+        int selection = menuController->getCurrentSelection();
+
+        if (items.empty() || selection >= (int)items.size()) {
+            display->display();
+            return;
+        }
+
+        MenuItem currentItem = items[selection];
+
+        // Check if this is the "Back" item
+        if (currentItem.path == MenuPath::BACK) {
+            // Show "Back" as a regular menu item
+            display->setTextSize(2);
+            display->setCursor(0, 8);
+            display->print("Back");
+        } else {
+            // Show info item: label + value
+            display->setTextSize(1);
+            display->setCursor(0, 4);
+            display->print(currentItem.label);
+
+            display->setTextSize(2);
+            display->setCursor(0, 16);
+            display->print(String(currentItem.currentValue));
+            display->setTextSize(1);
+            display->print(currentItem.unit);
         }
 
         display->display();
@@ -495,7 +549,8 @@ public:
           dryer(dryerInstance),
           currentMode(UIMode::HOME),
           currentStatsScreen(StatsScreen::BOX_TEMP),
-          lastMenuActivity(0) {
+          lastMenuActivity(0),
+          displayNeedsUpdate(true) {  // Start with dirty flag set
     }
 
     void begin() {
@@ -579,11 +634,14 @@ public:
         // Check menu timeout
         checkMenuTimeout(currentMillis);
 
-        // Render appropriate screen
-        if (currentMode == UIMode::HOME) {
-            renderHomeScreen();
-        } else {
-            renderMenuScreen();
+        // Only render if display needs update (dirty flag optimization)
+        if (displayNeedsUpdate) {
+            if (currentMode == UIMode::HOME) {
+                renderHomeScreen();
+            } else {
+                renderMenuScreen();
+            }
+            displayNeedsUpdate = false;  // Clear dirty flag
         }
     }
 

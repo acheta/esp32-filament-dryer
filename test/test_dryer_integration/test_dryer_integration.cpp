@@ -12,6 +12,7 @@
 #include "../mocks/MockSafetyMonitor.h"
 #include "../mocks/MockSettingsStorage.h"
 #include "../mocks/MockSoundController.h"
+#include "../mocks/MockFanControl.h"
 
 // Test fixture
 MockSensorManager* sensors;
@@ -551,6 +552,173 @@ void test_dryer_pause_and_resume_cycle() {
     TEST_ASSERT_TRUE(elapsed3 >= elapsed1+2-1 && elapsed3 <= elapsed1+2+1);
 }
 
+void test_dryer_starts_fan_when_running() {
+    MockFanControl* mockFan = new MockFanControl();
+
+    // Create dryer with fan
+    Dryer* dryerWithFan = new Dryer(sensors, heater, pid, safety, storage, sound, mockFan);
+    dryerWithFan->begin(0);
+
+    mockFan->resetCounts();
+
+    dryerWithFan->start();
+
+    TEST_ASSERT_EQUAL(1, mockFan->getStartCallCount());
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    delete dryerWithFan;
+    delete mockFan;
+}
+
+void test_dryer_keeps_fan_running_when_paused() {
+    MockFanControl* mockFan = new MockFanControl();
+
+    Dryer* dryerWithFan = new Dryer(sensors, heater, pid, safety, storage, sound, mockFan);
+    dryerWithFan->begin(0);
+    dryerWithFan->start();
+
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    mockFan->resetCounts();
+
+    dryerWithFan->pause();
+
+    // Fan should still be running (not stopped)
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+    TEST_ASSERT_EQUAL(0, mockFan->getStopCallCount());
+
+    delete dryerWithFan;
+    delete mockFan;
+}
+
+void test_dryer_stops_fan_when_finished() {
+    MockFanControl* mockFan = new MockFanControl();
+
+    Dryer* dryerWithFan = new Dryer(sensors, heater, pid, safety, storage, sound, mockFan);
+    dryerWithFan->begin(0);
+    dryerWithFan->selectPreset(PresetType::PLA);
+    dryerWithFan->start();
+
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    mockFan->resetCounts();
+
+    // Simulate time passing until finished (18001 seconds for PLA preset)
+    dryerWithFan->update(18001000);
+
+    TEST_ASSERT_EQUAL(1, mockFan->getStopCallCount());
+    TEST_ASSERT_FALSE(mockFan->isRunning());
+
+    delete dryerWithFan;
+    delete mockFan;
+}
+
+void test_dryer_stops_fan_when_reset() {
+    MockFanControl* mockFan = new MockFanControl();
+
+    Dryer* dryerWithFan = new Dryer(sensors, heater, pid, safety, storage, sound, mockFan);
+    dryerWithFan->begin(0);
+    dryerWithFan->start();
+
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    mockFan->resetCounts();
+
+    dryerWithFan->reset();
+
+    TEST_ASSERT_EQUAL(1, mockFan->getStopCallCount());
+    TEST_ASSERT_FALSE(mockFan->isRunning());
+
+    delete dryerWithFan;
+    delete mockFan;
+}
+
+void test_dryer_stops_fan_on_emergency() {
+    MockFanControl* mockFan = new MockFanControl();
+
+    Dryer* dryerWithFan = new Dryer(sensors, heater, pid, safety, storage, sound, mockFan);
+    dryerWithFan->begin(0);
+    dryerWithFan->start();
+
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    mockFan->resetCounts();
+
+    // Trigger emergency
+    safety->triggerEmergency("Overheat");
+    safety->update(1000);
+
+    TEST_ASSERT_EQUAL(1, mockFan->getStopCallCount());
+    TEST_ASSERT_FALSE(mockFan->isRunning());
+
+    delete dryerWithFan;
+    delete mockFan;
+}
+
+void test_dryer_stops_fan_when_stopped() {
+    MockFanControl* mockFan = new MockFanControl();
+
+    Dryer* dryerWithFan = new Dryer(sensors, heater, pid, safety, storage, sound, mockFan);
+    dryerWithFan->begin(0);
+    dryerWithFan->start();
+
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    mockFan->resetCounts();
+
+    dryerWithFan->stop();
+
+    TEST_ASSERT_EQUAL(1, mockFan->getStopCallCount());
+    TEST_ASSERT_FALSE(mockFan->isRunning());
+
+    delete dryerWithFan;
+    delete mockFan;
+}
+
+void test_dryer_fan_follows_state_transitions() {
+    MockFanControl* mockFan = new MockFanControl();
+
+    Dryer* dryerWithFan = new Dryer(sensors, heater, pid, safety, storage, sound, mockFan);
+    dryerWithFan->begin(0);
+
+    // Start -> fan should start
+    dryerWithFan->start();
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    // Pause -> fan should keep running
+    dryerWithFan->pause();
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    // Resume -> fan should still be running
+    dryerWithFan->resume();
+    TEST_ASSERT_TRUE(mockFan->isRunning());
+
+    // Stop -> fan should stop
+    dryerWithFan->stop();
+    TEST_ASSERT_FALSE(mockFan->isRunning());
+
+    delete dryerWithFan;
+    delete mockFan;
+}
+
+void test_dryer_works_without_fan_control() {
+    // Create dryer without fan (nullptr)
+    Dryer* dryerNoFan = new Dryer(sensors, heater, pid, safety, storage, sound, nullptr);
+    dryerNoFan->begin(0);
+
+    // Should not crash when fan is null
+    dryerNoFan->start();
+    TEST_ASSERT_EQUAL(DryerState::RUNNING, dryerNoFan->getState());
+
+    dryerNoFan->pause();
+    TEST_ASSERT_EQUAL(DryerState::PAUSED, dryerNoFan->getState());
+
+    dryerNoFan->reset();
+    TEST_ASSERT_EQUAL(DryerState::READY, dryerNoFan->getState());
+
+    delete dryerNoFan;
+}
+
 // ==================== Main Test Runner ====================
 
 int main(int argc, char **argv) {
@@ -619,6 +787,16 @@ int main(int argc, char **argv) {
     // Integration scenarios
     RUN_TEST(test_dryer_complete_heating_cycle);
     RUN_TEST(test_dryer_pause_and_resume_cycle);
+
+    // Fan control integration
+    RUN_TEST(test_dryer_starts_fan_when_running);
+    RUN_TEST(test_dryer_keeps_fan_running_when_paused);
+    RUN_TEST(test_dryer_stops_fan_when_finished);
+    RUN_TEST(test_dryer_stops_fan_when_reset);
+    RUN_TEST(test_dryer_stops_fan_on_emergency);
+    RUN_TEST(test_dryer_stops_fan_when_stopped);
+    RUN_TEST(test_dryer_fan_follows_state_transitions);
+    RUN_TEST(test_dryer_works_without_fan_control);
 
     return UNITY_END();
 }

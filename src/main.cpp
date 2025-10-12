@@ -22,8 +22,7 @@
 #include "interfaces/IDisplay.h"
 #include "interfaces/IButtonManager.h"
 #include "interfaces/IMenuController.h"
-
-
+#include "interfaces/IFanControl.h"
 
 // Implementations
 #include "sensors/HeaterTempSensor.h"
@@ -32,6 +31,7 @@
 #include "control/HeaterControl.h"
 #include "control/PIDController.h"
 #include "control/SafetyMonitor.h"
+#include "control/FanControl.h"
 #include "userInterface/OLEDDisplay.h"
 #include "userInterface/ButtonManager.h"
 #include "userInterface/MenuController.h"
@@ -76,6 +76,7 @@ IPIDController* pidController = nullptr;
 ISafetyMonitor* safetyMonitor = nullptr;
 ISettingsStorage* settingsStorage = nullptr;
 ISoundController* soundController = nullptr;
+IFanControl* fanControl = nullptr;
 IDryer* dryer = nullptr;
 IButtonManager* buttonManager = nullptr;
 IMenuController* menuController = nullptr;
@@ -264,6 +265,14 @@ void handleSerialCommand(String cmd) {
         Serial.print((int)stats.pwmOutput);
         Serial.println(" / 255");
 
+        // Fan status
+        Serial.print("Fan: ");
+        if (fanControl) {
+            Serial.println(fanControl->isRunning() ? "RUNNING" : "STOPPED");
+        } else {
+            Serial.println("NOT CONNECTED");
+        }
+
         // Sound
         Serial.print("Sound: ");
         Serial.println(dryer->isSoundEnabled() ? "ON" : "OFF");
@@ -365,7 +374,8 @@ void setupWatchdog() {
 /**
  * Initialize all hardware and create component instances
  */
-void setup() {// Initialize serial for debugging
+void setup() {
+    // Initialize serial for debugging
     Serial.begin(115200);
     delay(100);
 
@@ -373,7 +383,7 @@ void setup() {// Initialize serial for debugging
     Serial.println("ESP32 Dryer Initializing...");
     Serial.println("========================================\n");
 
-    // ... [existing watchdog setup] ...
+    setupWatchdog();
 
     // ==================== Create Sensor Components ====================
     Serial.println("Creating sensor components...");
@@ -403,6 +413,9 @@ void setup() {// Initialize serial for debugging
     safetyMonitor = new SafetyMonitor();
     Serial.println("  - SafetyMonitor created");
 
+    fanControl = new FanControl(FAN_PIN);
+    Serial.println("  - FanControl created");
+
     // ==================== Create Storage & Sound ====================
     Serial.println("\nCreating storage and sound components...");
     settingsStorage = new MockSettingsStorage();
@@ -419,7 +432,8 @@ void setup() {// Initialize serial for debugging
         pidController,
         safetyMonitor,
         settingsStorage,
-        soundController
+        soundController,
+        fanControl
     );
     Serial.println("  - Dryer created");
 
@@ -468,6 +482,9 @@ void setup() {// Initialize serial for debugging
     settingsStorage->begin();
     Serial.println("  ✓ SettingsStorage initialized");
 
+    // FanControl initializes in constructor, no begin() needed
+    Serial.println("  ✓ FanControl initialized");
+
     // Initialize dryer (sets up callbacks, loads settings)
     dryer->begin(millis());
     Serial.println("  ✓ Dryer initialized");
@@ -493,11 +510,6 @@ void setup() {// Initialize serial for debugging
     oledDisplay->println("demo mode...");
     oledDisplay->display();
     delay(2000);
-
-
- // start FAN relay
-    pinMode(FAN_PIN, OUTPUT);
-    digitalWrite(FAN_PIN, HIGH); // Turn on the fan
 
     // ==================== Configure and Start Demo ====================
     Serial.println("\n========================================");

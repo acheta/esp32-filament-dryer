@@ -393,12 +393,13 @@ private:
     std::vector<MenuItem> getSystemInfoMenu() {
         std::vector<MenuItem> items;
 
-        // Display system constants as info items
+        // Create info items showing config values
         MenuItem stateSave;
         stateSave.label = "STATE_SAVE_INT";
-        stateSave.type = MenuItemType::ACTION;  // Not editable
+        stateSave.type = MenuItemType::ACTION;
         stateSave.path = MenuPath::SYSTEM_INFO;
-        stateSave.currentValue = STATE_SAVE_INTERVAL / 1000;  // Show in seconds
+        stateSave.currentValue = STATE_SAVE_INTERVAL / 1000;
+        stateSave.unit = "s";
         items.push_back(stateSave);
 
         MenuItem pidUpdate;
@@ -406,6 +407,7 @@ private:
         pidUpdate.type = MenuItemType::ACTION;
         pidUpdate.path = MenuPath::SYSTEM_INFO;
         pidUpdate.currentValue = PID_UPDATE_INTERVAL;
+        pidUpdate.unit = "ms";
         items.push_back(pidUpdate);
 
         MenuItem minTemp;
@@ -413,6 +415,7 @@ private:
         minTemp.type = MenuItemType::ACTION;
         minTemp.path = MenuPath::SYSTEM_INFO;
         minTemp.currentValue = (int)MIN_TEMP;
+        minTemp.unit = "C";
         items.push_back(minTemp);
 
         MenuItem maxBoxTemp;
@@ -420,6 +423,7 @@ private:
         maxBoxTemp.type = MenuItemType::ACTION;
         maxBoxTemp.path = MenuPath::SYSTEM_INFO;
         maxBoxTemp.currentValue = (int)MAX_BOX_TEMP;
+        maxBoxTemp.unit = "C";
         items.push_back(maxBoxTemp);
 
         MenuItem maxHeaterTemp;
@@ -427,6 +431,7 @@ private:
         maxHeaterTemp.type = MenuItemType::ACTION;
         maxHeaterTemp.path = MenuPath::SYSTEM_INFO;
         maxHeaterTemp.currentValue = (int)MAX_HEATER_TEMP;
+        maxHeaterTemp.unit = "C";
         items.push_back(maxHeaterTemp);
 
         MenuItem defOvershoot;
@@ -434,6 +439,7 @@ private:
         defOvershoot.type = MenuItemType::ACTION;
         defOvershoot.path = MenuPath::SYSTEM_INFO;
         defOvershoot.currentValue = (int)DEFAULT_MAX_OVERSHOOT;
+        defOvershoot.unit = "C";
         items.push_back(defOvershoot);
 
         MenuItem maxTime;
@@ -441,6 +447,7 @@ private:
         maxTime.type = MenuItemType::ACTION;
         maxTime.path = MenuPath::SYSTEM_INFO;
         maxTime.currentValue = MAX_TIME_SECONDS;
+        maxTime.unit = "s";
         items.push_back(maxTime);
 
         MenuItem minTime;
@@ -448,6 +455,7 @@ private:
         minTime.type = MenuItemType::ACTION;
         minTime.path = MenuPath::SYSTEM_INFO;
         minTime.currentValue = MIN_TIME_SECONDS;
+        minTime.unit = "s";
         items.push_back(minTime);
 
         MenuItem pwmPeriod;
@@ -455,6 +463,7 @@ private:
         pwmPeriod.type = MenuItemType::ACTION;
         pwmPeriod.path = MenuPath::SYSTEM_INFO;
         pwmPeriod.currentValue = HEATER_PWM_PERIOD_MS;
+        pwmPeriod.unit = "ms";
         items.push_back(pwmPeriod);
 
         MenuItem pwmMax;
@@ -462,12 +471,15 @@ private:
         pwmMax.type = MenuItemType::ACTION;
         pwmMax.path = MenuPath::SYSTEM_INFO;
         pwmMax.currentValue = PWM_MAX_PID_OUTPUT;
+        pwmMax.unit = "";
         items.push_back(pwmMax);
 
         MenuItem back;
         back.label = "Back";
         back.type = MenuItemType::ACTION;
         back.path = MenuPath::BACK;
+        back.currentValue = 0;
+        back.unit = "";
         items.push_back(back);
 
         return items;

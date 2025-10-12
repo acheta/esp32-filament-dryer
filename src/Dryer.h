@@ -8,6 +8,7 @@
 #include "interfaces/ISafetyMonitor.h"
 #include "interfaces/ISettingsStorage.h"
 #include "interfaces/ISoundController.h"
+#include "interfaces/IFanControl.h"
 #include "Types.h"
 #include "Config.h"
 #include <vector>
@@ -27,6 +28,7 @@ private:
     ISafetyMonitor* safetyMonitor;
     ISettingsStorage* storage;
     ISoundController* soundController;
+    IFanControl* fanControl;
 
     // State
     DryerState currentState;
@@ -83,10 +85,12 @@ private:
             case DryerState::READY:
                 heaterControl->stop(currentMillis);
                 pidController->reset();
+                if (fanControl) fanControl->stop();
                 break;
 
             case DryerState::RUNNING:
                 heaterControl->start(currentMillis);
+                if (fanControl) fanControl->start();
                 if (prevState == DryerState::READY) {
                     // Fresh start
                     startTime = currentMillis;
@@ -100,11 +104,16 @@ private:
             case DryerState::PAUSED:
                 heaterControl->stop(currentMillis);
                 pausedTime = currentMillis;
+                // Keep fan running when paused
+                if (fanControl && !fanControl->isRunning()) {
+                    fanControl->start();
+                }
                 break;
 
             case DryerState::FINISHED:
                 heaterControl->stop(currentMillis);
                 pidController->reset();
+                if (fanControl) fanControl->stop();
                 storage->clearRuntimeState();
                 if (soundEnabled && soundController) {
                     soundController->playFinished();
@@ -114,6 +123,7 @@ private:
             case DryerState::FAILED:
                 heaterControl->emergencyStop();
                 pidController->reset();
+                if (fanControl) fanControl->stop();
                 if (soundEnabled && soundController) {
                     soundController->playAlarm();
                 }
@@ -121,6 +131,7 @@ private:
 
             case DryerState::POWER_RECOVERED:
                 heaterControl->stop(currentMillis);
+                if (fanControl) fanControl->stop();
                 break;
         }
     }
@@ -267,13 +278,15 @@ public:
           IPIDController* pid,
           ISafetyMonitor* safety,
           ISettingsStorage* store,
-          ISoundController* sound = nullptr)
+          ISoundController* sound = nullptr,
+          IFanControl* fan = nullptr)
         : sensorManager(sensors),
           heaterControl(heater),
           pidController(pid),
           safetyMonitor(safety),
           storage(store),
           soundController(sound),
+          fanControl(fan),
           currentState(DryerState::READY),
           previousState(DryerState::READY),
           activePreset(PresetType::PLA),
