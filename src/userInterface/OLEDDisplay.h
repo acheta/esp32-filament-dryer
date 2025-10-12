@@ -32,6 +32,7 @@ public:
         oledDisplay.clearDisplay();
         oledDisplay.setTextColor(SSD1306_WHITE);
         oledDisplay.setTextSize(1);
+        oledDisplay.setTextWrap(false);  // Disable text wrapping
         oledDisplay.display();
     }
 

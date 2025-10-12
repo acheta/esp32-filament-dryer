@@ -494,6 +494,11 @@ void setup() {// Initialize serial for debugging
     oledDisplay->display();
     delay(2000);
 
+
+ // start FAN relay
+    pinMode(FAN_PIN, OUTPUT);
+    digitalWrite(FAN_PIN, HIGH); // Turn on the fan
+
     // ==================== Configure and Start Demo ====================
     Serial.println("\n========================================");
     Serial.println("Starting Demo Mode");

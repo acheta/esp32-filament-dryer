@@ -58,6 +58,9 @@ constexpr uint8_t BUZZER_PIN = 3;          // A3
 // Boot button (built-in) - GPIO9 also used for SCL!
 constexpr uint8_t BOOT_BUTTON_PIN = 9;
 
+// Fan pin
+constexpr uint8_t FAN_PIN = 2;
+
 #endif // ESP32_C3_BOARD
 
 // ============================================================================
@@ -92,6 +95,9 @@ constexpr uint8_t BUZZER_PIN = 26;         // not implemented/tested
 
 // Boot button (built-in)
 constexpr uint8_t BOOT_BUTTON_PIN = 0;     // Strapping pin
+
+// Fan pin
+constexpr uint8_t FAN_PIN = 2;
 
 #endif // ESP32_S3_BOARD
 
@@ -131,7 +137,7 @@ constexpr float HEATER_PWM_FREQ = 1000.0 / HEATER_PWM_PERIOD_MS;  // 0.2 Hz (for
 
 constexpr uint8_t PWM_MIN = 0;
 constexpr uint8_t PWM_MAX = 100;  // Scale to 0-100 for simplicity, while using software PWM
-constexpr uint8_t PWM_MAX_PID_OUTPUT = 30;  // The heater is too powerful with thermal momentum - limit max PID output to 30%
+constexpr uint8_t PWM_MAX_PID_OUTPUT = 50;  // The heater is too powerful with thermal momentum - limit max PID output to 30%
 
 
 
@@ -150,14 +156,14 @@ constexpr PIDTuning PID_STRONG = {4.5, 0.6, 4.0};  // Still careful
 
 // PID control parameters
 constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.8;  // Low-pass filter coefficient
-constexpr float PID_TEMP_SLOWDOWN_MARGIN = 10.0;    // Start scaling within margin of max
+constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;    // Start scaling within margin of max
 
 // ==================== Preset Configurations ====================
 
 // PLA preset
-constexpr float PRESET_PLA_TEMP = 50.0;
+constexpr float PRESET_PLA_TEMP = 51.0;
 constexpr uint32_t PRESET_PLA_TIME = 5*60*60; // 5 hours
-constexpr float PRESET_PLA_OVERSHOOT = 10.0;
+constexpr float PRESET_PLA_OVERSHOOT = 19.0;
 
 // PETG preset
 constexpr float PRESET_PETG_TEMP = 65.0;
