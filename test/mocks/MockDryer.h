@@ -30,6 +30,8 @@ private:
     uint32_t resumeCallCount;
     uint32_t resetCallCount;
     uint32_t stopCallCount;
+    uint32_t adjustRemainingTimeCallCount;
+    int32_t lastAdjustRemainingTimeDelta;
 
 public:
     MockDryer()
@@ -43,7 +45,9 @@ public:
           pauseCallCount(0),
           resumeCallCount(0),
           resetCallCount(0),
-          stopCallCount(0) {
+          stopCallCount(0),
+          adjustRemainingTimeCallCount(0),
+          lastAdjustRemainingTimeDelta(0) {
 
         customPreset.targetTemp = 50.0;
         customPreset.targetTime = 14400;
@@ -105,6 +109,24 @@ public:
     void selectPreset(PresetType preset) override {
         activePreset = preset;
         stats.activePreset = preset;
+
+        // Update target time based on preset
+        switch (preset) {
+            case PresetType::PLA:
+                stats.remainingTime = 18000; // 5 hours
+                break;
+            case PresetType::PETG:
+                stats.remainingTime = 18000; // 5 hours
+                break;
+            case PresetType::CUSTOM:
+                stats.remainingTime = customPreset.targetTime;
+                break;
+        }
+
+        // If running/paused, reset elapsed time (simulating timer reset)
+        if (currentState == DryerState::RUNNING || currentState == DryerState::PAUSED) {
+            stats.elapsedTime = 0;
+        }
     }
 
     void setCustomPresetTemp(float temp) override {
@@ -125,6 +147,17 @@ public:
 
     DryingPreset getCustomPreset() const override {
         return customPreset;
+    }
+
+    void adjustRemainingTime(int32_t deltaSeconds) override {
+        adjustRemainingTimeCallCount++;
+        lastAdjustRemainingTimeDelta = deltaSeconds;
+
+        // Update remaining time
+        int32_t newRemaining = (int32_t)stats.remainingTime + deltaSeconds;
+        if (newRemaining < 600) newRemaining = 600;  // MIN_TIME_SECONDS
+        if (newRemaining > 36000) newRemaining = 36000;  // MAX_TIME_SECONDS
+        stats.remainingTime = (uint32_t)newRemaining;
     }
 
     void setPIDProfile(PIDProfile profile) override {
@@ -212,6 +245,8 @@ public:
     uint32_t getResumeCallCount() const { return resumeCallCount; }
     uint32_t getResetCallCount() const { return resetCallCount; }
     uint32_t getStopCallCount() const { return stopCallCount; }
+    uint32_t getAdjustRemainingTimeCallCount() const { return adjustRemainingTimeCallCount; }
+    int32_t getLastAdjustRemainingTimeDelta() const { return lastAdjustRemainingTimeDelta; }
 
     size_t getStateCallbackCount() const { return stateCallbacks.size(); }
     size_t getStatsCallbackCount() const { return statsCallbacks.size(); }

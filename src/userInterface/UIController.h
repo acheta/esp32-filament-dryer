@@ -49,6 +49,9 @@ private:
     // Dirty flag for display optimization
     bool displayNeedsUpdate;
 
+    // Store original remaining time when entering adjust timer
+    uint32_t originalRemainingTime;
+
     void setupButtonCallbacks() {
         if (!buttonManager) {
             Serial.println("ERROR: Cannot setup button callbacks - buttonManager is null!");
@@ -64,7 +67,8 @@ private:
 
                 if (currentMode == UIMode::HOME) {
                     if (event == ButtonEvent::SINGLE_CLICK) {
-                        // Enter menu
+                        // Enter menu - update remaining time before entering
+                        menuController->setRemainingTime(lastStats.remainingTime);
                         enterMenu();
                         if (soundController) soundController->playClick();
                     } else if (event == ButtonEvent::LONG_PRESS) {
@@ -144,7 +148,10 @@ private:
         dryer->registerStatsUpdateCallback(
             [this](const CurrentStats& stats) {
                 lastStats = stats;
-                displayNeedsUpdate = true;  // Mark display dirty on stats update
+                // Only set dirty flag if in HOME mode to avoid excessive menu redraws
+                if (currentMode == UIMode::HOME) {
+                    displayNeedsUpdate = true;
+                }
             }
         );
     }
@@ -259,6 +266,22 @@ private:
                     PRESET_PLA_OVERSHOOT
                 );
                 if (soundController) soundController->playConfirm();
+                break;
+
+            case MenuPath::ADJUST_TIMER:
+                {
+                    // value is in minutes (rounded to 10), convert to seconds
+                    uint32_t newRemainingTimeSeconds = value * 60;
+                    uint32_t currentRemainingTimeSeconds = lastStats.remainingTime;
+
+                    // Calculate delta
+                    int32_t deltaSeconds = (int32_t)newRemainingTimeSeconds - (int32_t)currentRemainingTimeSeconds;
+
+                    // Apply adjustment
+                    dryer->adjustRemainingTime(deltaSeconds);
+
+                    if (soundController) soundController->playConfirm();
+                }
                 break;
 
             case MenuPath::PID_SOFT:
@@ -550,7 +573,8 @@ public:
           currentMode(UIMode::HOME),
           currentStatsScreen(StatsScreen::BOX_TEMP),
           lastMenuActivity(0),
-          displayNeedsUpdate(true) {  // Start with dirty flag set
+          displayNeedsUpdate(true),
+          originalRemainingTime(0) {
     }
 
     void begin() {

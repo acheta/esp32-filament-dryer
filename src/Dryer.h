@@ -404,10 +404,34 @@ public:
     }
 
     void selectPreset(PresetType preset) override {
-        if (currentState == DryerState::READY ||
-            currentState == DryerState::POWER_RECOVERED) {
-            loadPreset(preset);
+        // Load the new preset settings
+        loadPreset(preset);
+
+        // If running or paused, reset the timer to start from beginning
+        if (currentState == DryerState::RUNNING || currentState == DryerState::PAUSED) {
+            startTime = currentTime;
+            totalPausedDuration = 0;
+
+            // If paused, adjust pausedTime to current time
+            if (currentState == DryerState::PAUSED) {
+                pausedTime = currentTime;
+            }
         }
+    }
+
+    void adjustRemainingTime(int32_t deltaSeconds) override {
+        // Calculate new target time
+        int32_t newTargetTime = (int32_t)targetTimeSeconds + deltaSeconds;
+
+        // Clamp to valid range
+        if (newTargetTime < (int32_t)MIN_TIME_SECONDS) {
+            newTargetTime = MIN_TIME_SECONDS;
+        }
+        if (newTargetTime > (int32_t)MAX_TIME_SECONDS) {
+            newTargetTime = MAX_TIME_SECONDS;
+        }
+
+        targetTimeSeconds = (uint32_t)newTargetTime;
     }
 
     void setCustomPresetTemp(float temp) override {

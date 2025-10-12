@@ -42,6 +42,9 @@ public:
     virtual void saveCustomPreset() = 0;
     virtual DryingPreset getCustomPreset() const = 0;
 
+    // Timer adjustment
+    virtual void adjustRemainingTime(int32_t deltaSeconds) = 0;
+
     // PID profile
     virtual void setPIDProfile(PIDProfile profile) = 0;
     virtual PIDProfile getPIDProfile() const = 0;

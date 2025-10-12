@@ -42,6 +42,7 @@ public:
     virtual void setCustomPresetValues(float temp, uint32_t time, float overshoot) = 0;
     virtual void setPIDProfile(const String& profile) = 0;
     virtual void setSoundEnabled(bool enabled) = 0;
+    virtual void setRemainingTime(uint32_t seconds) = 0;
 
     // Callbacks
     virtual void registerSelectionCallback(MenuSelectionCallback callback) = 0;

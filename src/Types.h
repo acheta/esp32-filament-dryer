@@ -69,6 +69,7 @@ enum class MenuPath {
     SOUND_ON,
     SOUND_OFF,
     SYSTEM_INFO,
+    ADJUST_TIMER,
     BACK
 };
 
@@ -117,7 +118,7 @@ struct SensorReadings {
     SensorReading boxTemp;
     SensorReading boxHumidity;
 
-    SensorReadings() {}
+    SensorReadings() = default;
 };
 
 struct CurrentStats {

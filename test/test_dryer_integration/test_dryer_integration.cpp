@@ -385,7 +385,7 @@ void test_dryer_selects_petg_preset() {
     TEST_ASSERT_EQUAL_FLOAT(65.0, stats.targetTemp);
 }
 
-void test_dryer_cannot_change_preset_while_running() {
+void test_dryer_can_change_preset_while_running() {
     dryer->begin(0);
     dryer->selectPreset(PresetType::PLA);
     dryer->start();
@@ -394,7 +394,7 @@ void test_dryer_cannot_change_preset_while_running() {
     dryer->selectPreset(PresetType::PETG);
 
     // Should still be PLA
-    TEST_ASSERT_EQUAL(PresetType::PLA, dryer->getActivePreset());
+    TEST_ASSERT_EQUAL(PresetType::PETG, dryer->getActivePreset());
 }
 
 // ==================== PID Profile Tests ====================
@@ -719,6 +719,230 @@ void test_dryer_works_without_fan_control() {
     delete dryerNoFan;
 }
 
+// ==================== Preset Change Runtime Tests ====================
+
+void test_dryer_allows_preset_change_while_running() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    TEST_ASSERT_EQUAL(DryerState::RUNNING, dryer->getState());
+    TEST_ASSERT_EQUAL(PresetType::PLA, dryer->getActivePreset());
+
+    // Change preset while running (should be allowed now)
+    dryer->selectPreset(PresetType::PETG);
+
+    TEST_ASSERT_EQUAL(PresetType::PETG, dryer->getActivePreset());
+    TEST_ASSERT_EQUAL(DryerState::RUNNING, dryer->getState());
+}
+
+void test_dryer_allows_preset_change_while_paused() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+    dryer->pause();
+
+    TEST_ASSERT_EQUAL(DryerState::PAUSED, dryer->getState());
+
+    // Change preset while paused
+    dryer->selectPreset(PresetType::PETG);
+
+    TEST_ASSERT_EQUAL(PresetType::PETG, dryer->getActivePreset());
+    TEST_ASSERT_EQUAL(DryerState::PAUSED, dryer->getState());
+}
+
+void test_dryer_resets_timer_when_preset_changed_during_run() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    // Run for 10 seconds
+    dryer->update(10000);
+
+    CurrentStats stats1 = dryer->getCurrentStats();
+    TEST_ASSERT_TRUE(stats1.elapsedTime >= 9 && stats1.elapsedTime <= 11); // ~10 seconds
+
+    // Change preset - should reset timer
+    dryer->selectPreset(PresetType::PETG);
+
+    // Elapsed time should be reset to 0
+    dryer->update(10100);
+    CurrentStats stats2 = dryer->getCurrentStats();
+    TEST_ASSERT_TRUE(stats2.elapsedTime <= 1); // Nearly 0 (just 100ms passed)
+}
+
+void test_dryer_resets_timer_when_preset_changed_while_paused() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    // Run for 5 seconds
+    dryer->update(5000);
+    dryer->pause();
+
+    CurrentStats stats1 = dryer->getCurrentStats();
+    TEST_ASSERT_TRUE(stats1.elapsedTime >= 4 && stats1.elapsedTime <= 6); // ~5 seconds
+
+    // Change preset while paused - should reset timer
+    dryer->selectPreset(PresetType::PETG);
+
+    // Elapsed time should be reset to 0
+    CurrentStats stats2 = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL(0, stats2.elapsedTime);
+
+    // Resume and verify timer starts from 0
+    dryer->resume();
+    dryer->update(5100);
+    CurrentStats stats3 = dryer->getCurrentStats();
+    TEST_ASSERT_TRUE(stats3.elapsedTime <= 1); // Nearly 0
+}
+
+void test_dryer_updates_target_temp_and_time_on_preset_change() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    CurrentStats stats1 = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL_FLOAT(51.0, stats1.targetTemp);  // PLA temp
+
+    // Change to PETG
+    dryer->selectPreset(PresetType::PETG);
+
+    CurrentStats stats2 = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL_FLOAT(65.0, stats2.targetTemp);  // PETG temp
+}
+
+// ==================== Timer Adjustment Tests ====================
+
+void test_dryer_adjust_remaining_time_adds_time() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    // Get initial remaining time
+    CurrentStats stats1 = dryer->getCurrentStats();
+    uint32_t initialRemaining = stats1.remainingTime;
+
+    // Add 10 minutes (600 seconds)
+    dryer->adjustRemainingTime(600);
+
+    CurrentStats stats2 = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL(initialRemaining + 600, stats2.remainingTime);
+}
+
+void test_dryer_adjust_remaining_time_subtracts_time() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    CurrentStats stats1 = dryer->getCurrentStats();
+    uint32_t initialRemaining = stats1.remainingTime;
+
+    // Subtract 10 minutes (600 seconds)
+    dryer->adjustRemainingTime(-600);
+
+    CurrentStats stats2 = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL(initialRemaining - 600, stats2.remainingTime);
+}
+
+void test_dryer_adjust_remaining_time_clamps_to_minimum() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    // Try to set below minimum (MIN_TIME_SECONDS = 600)
+    dryer->adjustRemainingTime(-50000);  // Large negative number
+
+    CurrentStats stats = dryer->getCurrentStats();
+    TEST_ASSERT_TRUE(stats.remainingTime >= 600);  // Should be clamped to MIN
+}
+
+void test_dryer_adjust_remaining_time_clamps_to_maximum() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    // Try to set above maximum (MAX_TIME_SECONDS = 36000)
+    dryer->adjustRemainingTime(50000);  // Large positive number
+
+    CurrentStats stats = dryer->getCurrentStats();
+    TEST_ASSERT_TRUE(stats.remainingTime <= 36000);  // Should be clamped to MAX
+}
+
+void test_dryer_adjust_remaining_time_works_while_paused() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+    dryer->pause();
+
+    CurrentStats stats1 = dryer->getCurrentStats();
+    uint32_t initialRemaining = stats1.remainingTime;
+
+    // Adjust while paused
+    dryer->adjustRemainingTime(1200);  // Add 20 minutes
+
+    CurrentStats stats2 = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL(initialRemaining + 1200, stats2.remainingTime);
+}
+
+void test_dryer_adjust_remaining_time_works_while_ready() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+
+    CurrentStats stats1 = dryer->getCurrentStats();
+    uint32_t initialRemaining = stats1.remainingTime;
+
+    // Adjust while ready
+    dryer->adjustRemainingTime(-600);  // Subtract 10 minutes
+
+    CurrentStats stats2 = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL(initialRemaining - 600, stats2.remainingTime);
+}
+
+void test_dryer_adjust_remaining_time_multiple_adjustments() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    CurrentStats stats1 = dryer->getCurrentStats();
+    uint32_t initialRemaining = stats1.remainingTime;
+
+    // Multiple adjustments
+    dryer->adjustRemainingTime(600);   // +10 min
+    dryer->adjustRemainingTime(600);   // +10 min
+    dryer->adjustRemainingTime(-300);  // -5 min
+
+    CurrentStats stats2 = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL(initialRemaining + 900, stats2.remainingTime);  // Net +15 min
+}
+
+void test_dryer_completes_when_adjusted_time_reached() {
+    dryer->begin(0);
+    dryer->selectPreset(PresetType::PLA);
+    dryer->start();
+
+    // Get current remaining time
+    CurrentStats stats1 = dryer->getCurrentStats();
+
+    // Calculate delta to set remaining time to 60 seconds
+    // We want: currentRemaining + delta = 60
+    // So: delta = 60 - currentRemaining
+    int32_t targetRemaining = 60;
+    int32_t delta = targetRemaining - (int32_t)stats1.remainingTime;
+
+    dryer->adjustRemainingTime(delta);
+
+    // Verify adjusted time (should be clamped to MIN_TIME_SECONDS = 600)
+    CurrentStats stats2 = dryer->getCurrentStats();
+    // Since 60 < MIN_TIME_SECONDS (600), it will be clamped to 600
+    TEST_ASSERT_EQUAL(600, stats2.remainingTime);
+
+    // Wait for completion (600 seconds + 1)
+    dryer->update(601000);
+
+    TEST_ASSERT_EQUAL(DryerState::FINISHED, dryer->getState());
+}
+
 // ==================== Main Test Runner ====================
 
 int main(int argc, char **argv) {
@@ -766,7 +990,7 @@ int main(int argc, char **argv) {
     // Presets
     RUN_TEST(test_dryer_selects_pla_preset);
     RUN_TEST(test_dryer_selects_petg_preset);
-    RUN_TEST(test_dryer_cannot_change_preset_while_running);
+    RUN_TEST(test_dryer_can_change_preset_while_running);
 
     // PID profile
     RUN_TEST(test_dryer_sets_pid_profile);
@@ -797,6 +1021,23 @@ int main(int argc, char **argv) {
     RUN_TEST(test_dryer_stops_fan_when_stopped);
     RUN_TEST(test_dryer_fan_follows_state_transitions);
     RUN_TEST(test_dryer_works_without_fan_control);
+
+    // Preset change runtime tests
+    RUN_TEST(test_dryer_allows_preset_change_while_running);
+    RUN_TEST(test_dryer_allows_preset_change_while_paused);
+    RUN_TEST(test_dryer_resets_timer_when_preset_changed_during_run);
+    RUN_TEST(test_dryer_resets_timer_when_preset_changed_while_paused);
+    RUN_TEST(test_dryer_updates_target_temp_and_time_on_preset_change);
+
+    // Timer adjustment tests
+    RUN_TEST(test_dryer_adjust_remaining_time_adds_time);
+    RUN_TEST(test_dryer_adjust_remaining_time_subtracts_time);
+    RUN_TEST(test_dryer_adjust_remaining_time_clamps_to_minimum);
+    RUN_TEST(test_dryer_adjust_remaining_time_clamps_to_maximum);
+    RUN_TEST(test_dryer_adjust_remaining_time_works_while_paused);
+    RUN_TEST(test_dryer_adjust_remaining_time_works_while_ready);
+    RUN_TEST(test_dryer_adjust_remaining_time_multiple_adjustments);
+    RUN_TEST(test_dryer_completes_when_adjusted_time_reached);
 
     return UNITY_END();
 }

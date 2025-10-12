@@ -41,6 +41,9 @@ private:
     // Current sound state (for display)
     bool soundEnabled;
 
+    // Current remaining time for adjust timer (in seconds)
+    uint32_t currentRemainingTime;
+
     // Callbacks
     std::vector<MenuSelectionCallback> callbacks;
 
@@ -136,6 +139,10 @@ private:
             case MenuPath::CUSTOM_OVERSHOOT:
                 customDraft.overshoot = editValue;
                 break;
+            case MenuPath::ADJUST_TIMER:
+                // Notify with the new value in minutes
+                notifyCallbacks(editingItem.path, editValue);
+                return;  // Don't call notifyCallbacks again below
             default:
                 break;
         }
@@ -201,6 +208,11 @@ private:
         }
     }
 
+    // Round value to nearest multiple of step
+    int roundToNearest(int value, int step) {
+        return ((value + step / 2) / step) * step;
+    }
+
     // Menu item generators
     std::vector<MenuItem> getRootMenu() {
         std::vector<MenuItem> items;
@@ -225,6 +237,19 @@ private:
         editCustom.path = MenuPath::PRESET_CUSTOM;
         editCustom.submenuPath = MenuPath::PRESET_CUSTOM;
         items.push_back(editCustom);
+
+        MenuItem adjustTimer;
+        adjustTimer.label = "Adjust Timer";
+        adjustTimer.type = MenuItemType::VALUE_EDIT;
+        adjustTimer.path = MenuPath::ADJUST_TIMER;
+        // Round remaining time to nearest 10 minutes
+        int remainingMinutes = currentRemainingTime / 60;
+        adjustTimer.currentValue = roundToNearest(remainingMinutes, 10);
+        adjustTimer.minValue = 10;  // 10 minutes minimum
+        adjustTimer.maxValue = (int)(maxTime / 60);  // MAX_TIME_SECONDS in minutes
+        adjustTimer.step = 10;
+        adjustTimer.unit = "min";
+        items.push_back(adjustTimer);
 
         MenuItem pid;
         pid.label = "PID: " + currentPIDProfile;
@@ -495,7 +520,8 @@ public:
           maxTime(MAX_TIME_SECONDS),
           maxOvershoot(DEFAULT_MAX_OVERSHOOT),
           currentPIDProfile("NORMAL"),
-          soundEnabled(true) {
+          soundEnabled(true),
+          currentRemainingTime(14400) {  // Default 4 hours
 
         customDraft.temp = PRESET_CUSTOM_TEMP;
         customDraft.time = PRESET_CUSTOM_TIME;
@@ -548,6 +574,10 @@ public:
 
     void setSoundEnabled(bool enabled) {
         soundEnabled = enabled;
+    }
+
+    void setRemainingTime(uint32_t seconds) {
+        currentRemainingTime = seconds;
     }
 
     void registerSelectionCallback(MenuSelectionCallback callback) override {
