@@ -109,7 +109,7 @@ constexpr uint8_t FAN_PIN = 2;
 // ==================== Timing Constants ====================
 
 // Update intervals (milliseconds)
-constexpr uint32_t HEATER_TEMP_INTERVAL = 500;
+constexpr uint32_t HEATER_TEMP_INTERVAL = 1000;
 constexpr uint32_t BOX_DATA_INTERVAL = 2000;
 constexpr uint32_t PID_UPDATE_INTERVAL = 500;
 constexpr uint32_t STATE_SAVE_INTERVAL = 60000; // Save every 60 seconds

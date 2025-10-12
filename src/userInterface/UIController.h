@@ -13,6 +13,11 @@
  *
  * Coordinates between buttons, menu, display, and dryer.
  * Handles different screen modes (HOME stats vs MENU).
+ *
+ * Optimizations:
+ * - Only updates display when values actually change
+ * - Uses stored currentTime instead of millis() for consistency
+ * - Dirty flag prevents unnecessary display refreshes
  */
 class UIController {
 private:
@@ -21,6 +26,9 @@ private:
     IButtonManager* buttonManager;
     ISoundController* soundController;
     IDryer* dryer;
+
+    // Timing - stored from update() for use in callbacks
+    uint32_t currentTime;
 
     // UI state
     enum class UIMode {
@@ -46,11 +54,33 @@ private:
     // Last stats for display
     CurrentStats lastStats;
 
+    // Cached display values to detect changes (for HOME mode optimization)
+    struct CachedDisplayValues {
+        float boxTemp;
+        float heaterTemp;
+        float boxHumidity;
+        uint32_t remainingTime;
+        DryerState state;
+        PresetType preset;
+
+        CachedDisplayValues()
+            : boxTemp(-999), heaterTemp(-999), boxHumidity(-999),
+              remainingTime(0), state(DryerState::READY), preset(PresetType::PLA) {}
+
+        bool operator!=(const CachedDisplayValues& other) const {
+            return (abs(boxTemp - other.boxTemp) > 0.05f) ||
+                   (abs(heaterTemp - other.heaterTemp) > 0.05f) ||
+                   (abs(boxHumidity - other.boxHumidity) > 0.5f) ||
+                   (remainingTime != other.remainingTime) ||
+                   (state != other.state) ||
+                   (preset != other.preset);
+        }
+    };
+
+    CachedDisplayValues cachedValues;
+
     // Dirty flag for display optimization
     bool displayNeedsUpdate;
-
-    // Store original remaining time when entering adjust timer
-    uint32_t originalRemainingTime;
 
     void setupButtonCallbacks() {
         if (!buttonManager) {
@@ -62,7 +92,7 @@ private:
         // SET button
         buttonManager->registerButtonCallback(ButtonType::SET,
             [this](ButtonEvent event) {
-                lastMenuActivity = millis();  // Reset timeout on ANY button press
+                lastMenuActivity = currentTime;  // Use stored currentTime
                 displayNeedsUpdate = true;
 
                 if (currentMode == UIMode::HOME) {
@@ -97,7 +127,7 @@ private:
         // UP button
         buttonManager->registerButtonCallback(ButtonType::UP,
             [this](ButtonEvent event) {
-                lastMenuActivity = millis();  // Reset timeout
+                lastMenuActivity = currentTime;  // Use stored currentTime
                 displayNeedsUpdate = true;
 
                 if (event == ButtonEvent::SINGLE_CLICK) {
@@ -117,7 +147,7 @@ private:
         // DOWN button
         buttonManager->registerButtonCallback(ButtonType::DOWN,
             [this](ButtonEvent event) {
-                lastMenuActivity = millis();  // Reset timeout
+                lastMenuActivity = currentTime;  // Use stored currentTime
                 displayNeedsUpdate = true;
 
                 if (event == ButtonEvent::SINGLE_CLICK) {
@@ -148,10 +178,24 @@ private:
         dryer->registerStatsUpdateCallback(
             [this](const CurrentStats& stats) {
                 lastStats = stats;
-                // Only set dirty flag if in HOME mode to avoid excessive menu redraws
+
+                // Only update display in HOME mode if displayed values actually changed
                 if (currentMode == UIMode::HOME) {
-                    displayNeedsUpdate = true;
+                    CachedDisplayValues newValues;
+                    newValues.boxTemp = stats.boxTemp;
+                    newValues.heaterTemp = stats.currentTemp;
+                    newValues.boxHumidity = stats.boxHumidity;
+                    newValues.remainingTime = stats.remainingTime;
+                    newValues.state = stats.state;
+                    newValues.preset = stats.activePreset;
+
+                    if (newValues != cachedValues) {
+                        cachedValues = newValues;
+                        displayNeedsUpdate = true;
+                    }
                 }
+                // In MENU mode, don't set dirty flag from stats updates
+                // Only button presses or menu actions trigger display updates
             }
         );
     }
@@ -159,7 +203,7 @@ private:
     void enterMenu() {
         currentMode = UIMode::MENU;
         menuController->reset();
-        lastMenuActivity = millis();
+        lastMenuActivity = currentTime;  // Use stored currentTime
         displayNeedsUpdate = true;
     }
 
@@ -269,20 +313,17 @@ private:
                 break;
 
             case MenuPath::ADJUST_TIMER:
-                {
-                    // value is in minutes (rounded to 10), convert to seconds
-                    uint32_t newRemainingTimeSeconds = value * 60;
-                    uint32_t currentRemainingTimeSeconds = lastStats.remainingTime;
+                uint32_t newRemainingTimeSeconds = value * 60;
+                uint32_t currentRemainingTimeSeconds = lastStats.remainingTime;
+                int32_t deltaSeconds = (int32_t)newRemainingTimeSeconds - (int32_t)currentRemainingTimeSeconds;
+                dryer->adjustRemainingTime(deltaSeconds);
 
-                    // Calculate delta
-                    int32_t deltaSeconds = (int32_t)newRemainingTimeSeconds - (int32_t)currentRemainingTimeSeconds;
+                // Refresh stats and update menu
+                lastStats = dryer->getCurrentStats();
+                menuController->setRemainingTime(lastStats.remainingTime);
 
-                    // Apply adjustment
-                    dryer->adjustRemainingTime(deltaSeconds);
-
-                    if (soundController) soundController->playConfirm();
-                }
-                break;
+                if (soundController) soundController->playConfirm();
+            break;
 
             case MenuPath::PID_SOFT:
                 dryer->setPIDProfile(PIDProfile::SOFT);
@@ -570,11 +611,11 @@ public:
           buttonManager(buttons),
           soundController(sound),
           dryer(dryerInstance),
+          currentTime(0),
           currentMode(UIMode::HOME),
           currentStatsScreen(StatsScreen::BOX_TEMP),
           lastMenuActivity(0),
-          displayNeedsUpdate(true),
-          originalRemainingTime(0) {
+          displayNeedsUpdate(true) {
     }
 
     void begin() {
@@ -648,11 +689,22 @@ public:
         Serial.println("  Getting initial stats...");
         lastStats = dryer->getCurrentStats();
 
+        // Initialize cached values
+        cachedValues.boxTemp = lastStats.boxTemp;
+        cachedValues.heaterTemp = lastStats.currentTemp;
+        cachedValues.boxHumidity = lastStats.boxHumidity;
+        cachedValues.remainingTime = lastStats.remainingTime;
+        cachedValues.state = lastStats.state;
+        cachedValues.preset = lastStats.activePreset;
+
         Serial.println("UIController::begin() - Initialization complete!");
     }
 
     void update(uint32_t currentMillis) {
-        // Update buttons
+        // Store current time for use in callbacks
+        currentTime = currentMillis;
+
+        // Update buttons (high priority - must be called frequently)
         buttonManager->update(currentMillis);
 
         // Check menu timeout

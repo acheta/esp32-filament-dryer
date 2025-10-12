@@ -14,6 +14,8 @@
  * Coordinates reading from multiple sensors at different rates,
  * maintains cached readings, and notifies callbacks on updates.
  *
+ * Uses async reading pattern for DS18B20 to avoid blocking.
+ *
  * Sensors are injected as dependencies for better testability.
  */
 class SensorManager : public ISensorManager {
@@ -30,6 +32,10 @@ private:
     // Timing
     uint32_t lastHeaterUpdate;
     uint32_t lastBoxUpdate;
+
+    // Heater sensor async state
+    bool heaterConversionRequested;
+    uint32_t heaterConversionRequestTime;
 
     // Callbacks
     std::vector<HeaterTempCallback> heaterTempCallbacks;
@@ -61,12 +67,28 @@ private:
     }
 
     void updateHeaterTemp(uint32_t currentMillis) {
+        // Async pattern: request conversion, then read result later
+        if (!heaterConversionRequested) {
+            // Request new conversion
+            heaterSensor->requestConversion();
+            heaterConversionRequested = true;
+            heaterConversionRequestTime = currentMillis;
+            return;
+        }
+
+        // Check if conversion is ready
+        if (!heaterSensor->isConversionReady()) {
+            return;  // Still waiting, check again next loop
+        }
+
+        // Conversion ready, read the result
         if (!heaterSensor->read()) {
             // Reading failed
             if (!heaterSensor->isValid()) {
                 heaterTemp.isValid = false;
                 notifyError(SensorType::HEATER_TEMP, heaterSensor->getLastError());
             }
+            heaterConversionRequested = false;
             return;
         }
 
@@ -76,6 +98,9 @@ private:
         heaterTemp.isValid = true;
 
         notifyHeaterTemp(heaterTemp.value, currentMillis);
+
+        // Reset for next conversion
+        heaterConversionRequested = false;
     }
 
     void updateBoxData(uint32_t currentMillis) {
@@ -112,7 +137,9 @@ public:
         : heaterSensor(heater),
           boxSensor(box),
           lastHeaterUpdate(0),
-          lastBoxUpdate(0) {
+          lastBoxUpdate(0),
+          heaterConversionRequested(false),
+          heaterConversionRequestTime(0) {
 
         heaterTemp.isValid = false;
         boxTemp.isValid = false;
@@ -122,16 +149,26 @@ public:
     void begin() override {
         heaterSensor->begin();
         boxSensor->begin();
+
+        // Request initial conversion to get first reading faster
+        heaterSensor->requestConversion();
+        heaterConversionRequested = true;
+        heaterConversionRequestTime = 0;
     }
 
     void update(uint32_t currentMillis) override {
-        // Update heater temp every 500ms
+        // Update heater temp at configured interval (1000ms)
+        // Note: This checks interval from last UPDATE attempt, not last successful read
+        // The async pattern means we request conversion at interval, then read when ready
         if (currentMillis - lastHeaterUpdate >= HEATER_TEMP_INTERVAL) {
             lastHeaterUpdate = currentMillis;
             updateHeaterTemp(currentMillis);
+        } else if (heaterConversionRequested) {
+            // Even if interval hasn't elapsed, check if pending conversion is ready
+            updateHeaterTemp(currentMillis);
         }
 
-        // Update box data every 2000ms
+        // Update box data every 2000ms (synchronous, relatively fast I2C read)
         if (currentMillis - lastBoxUpdate >= BOX_DATA_INTERVAL) {
             lastBoxUpdate = currentMillis;
             updateBoxData(currentMillis);
