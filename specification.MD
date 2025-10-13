@@ -14,8 +14,8 @@
 - **Callback types**: Use `std::function<>` for flexibility
 - **Registration pattern**: Components expose `register*Callback()` methods
 - **Hybrid approach**:
-    - **Push (callbacks)**: For time-critical or event-driven data (sensor updates, state changes, emergencies)
-    - **Pull (getters)**: For on-demand access to cached/current state (display updates, stats queries)
+  - **Push (callbacks)**: For time-critical or event-driven data (sensor updates, state changes, emergencies)
+  - **Pull (getters)**: For on-demand access to cached/current state (display updates, stats queries)
 
 ### 3. Component Responsibilities
 
@@ -24,116 +24,93 @@
 - State machine implementation (READY, RUNNING, PAUSED, FINISHED, FAILED, POWER_RECOVERED)
 - State transition logic and validation
 - **Sets constraints** to respective components (does NOT enforce them):
-    - Passes max heater temp to PIDController
-    - Passes max box temp to SafetyMonitor
-    - Passes min/max temp to MenuController for value clamping
-    - Passes max time to MenuController
+  - Passes max heater temp to PIDController
+  - Passes max box temp to SafetyMonitor
+  - Passes min/max temp to MenuController for value clamping
+  - Passes max time to MenuController
 - Registers callbacks with all components
 - Called from `loop()` via `update(currentMillis)`
-- Persists runtime state every second
-- **Does NOT**: Read sensors directly, control hardware directly, handle UI logic, validate constraints
+- Persists runtime state periodically (interval defined in Config.h as `STATE_SAVE_INTERVAL`)
+- **Allows preset changes during RUNNING/PAUSED states** - resets timer to 0 when preset changed
+- **Timer adjustment**: `adjustRemainingTime(deltaSeconds)` allows adding/subtracting time, clamped to MIN/MAX_TIME_SECONDS
+- **Does NOT**: Read sensors directly, control hardware directly, handle UI logic, validate constraints, cap PWM output (PIDController does this)
 
 #### **SensorManager**
 - Owns all physical sensors (DS18B20, AM2320)
 - Multi-rate reading strategy:
-    - Heater temp (DS18B20): 500ms interval
-    - Box temp/humidity (AM2320): 2000ms interval
+  - Heater temp (DS18B20): Interval defined by `HEATER_TEMP_INTERVAL` in Config.h
+  - Box temp/humidity (AM2320): Interval defined by `BOX_DATA_INTERVAL` in Config.h
 - Maintains cached readings with timestamps and validity flags
+- **Async reading pattern for DS18B20**: Uses `requestConversion()` → wait → `isConversionReady()` → `read()` to avoid blocking
 - **Push interface**: Callbacks on new readings
-    - `registerHeaterTempCallback(callback)` - fires every 500ms
-    - `registerBoxDataCallback(callback)` - fires every 2000ms
-    - `registerSensorErrorCallback(callback)` - fires on failures
+  - `registerHeaterTempCallback(callback)` - fires at heater temp interval
+  - `registerBoxDataCallback(callback)` - fires at box data interval
+  - `registerSensorErrorCallback(callback)` - fires on failures
 - **Pull interface**: Returns cached values on demand
-    - `getReadings()`, `getHeaterTemp()`, `getBoxTemp()`, `getBoxHumidity()`
+  - `getReadings()`, `getHeaterTemp()`, `getBoxTemp()`, `getBoxHumidity()`
 - Detects and reports sensor failures
 - **Does NOT**: Process or interpret readings, enforce limits
 
 #### **PIDController**
 - **Stateful** - maintains integral accumulation and last input for derivative
-- Subscribes to heater temp updates (500ms) via callback
+- Subscribes to heater temp updates via callback
 - Computes PWM output: `compute(setpoint, input, currentMillis)`
-- **Three profiles**: `setProfile(PIDProfile::SOFT | NORMAL | STRONG)`
-    - **SOFT**: Kp=2.0, Ki=0.5, Kd=1.0 - gentle heating, slower response
-    - **NORMAL**: Kp=4.0, Ki=1.0, Kd=2.0 - balanced response
-    - **STRONG**: Kp=6.0, Ki=1.5, Kd=3.0 - aggressive heating, faster response
-- Output limits: `setLimits(outMin, outMax)`
+- **Three profiles**: `setProfile(PIDProfile::SOFT | NORMAL | STRONG)` - tuning constants defined in Config.h
+- **Output limits**: Capped to `PWM_MAX_PID_OUTPUT` from Config.h (primary power safety limit)
 - **Anti-windup protection**:
-    - Clamp integral term to output limits before adding to total output
-    - When output saturates (hits min/max), stop accumulating integral
-    - Reset integral when error changes sign or system restarts
-  ```cpp
-  // Anti-windup implementation
-  integral += ki * error * dtSec;
-  
-  // Clamp integral to output range
-  integral = constrain(integral, outMin, outMax);
-  
-  float output = pTerm + integral + dTerm;
-  
-  // If output is saturated, prevent further integral accumulation
-  if ((output >= outMax && error > 0) || (output <= outMin && error < 0)) {
-      integral -= ki * error * dtSec;  // Undo this accumulation
-  }
-  ```
+  - Clamp integral term to output limits before adding to total output
+  - When output saturates (hits min/max), stop accumulating integral
+  - Reset integral when error changes sign or system restarts
 - **Derivative smoothing** (low-pass filter):
-    - Use exponential moving average on derivative term to reduce noise sensitivity
-    - Filter coefficient α = 0.2 (adjust for more/less smoothing)
-  ```cpp
-  float rawDerivative = -kd * dInput;
-  
-  // Low-pass filter: filtered = α * raw + (1-α) * lastFiltered
-  const float alpha = 0.2;
-  filteredDerivative = alpha * rawDerivative + (1.0 - alpha) * filteredDerivative;
-  
-  float dTerm = filteredDerivative;
-  ```
+  - Use exponential moving average on derivative term to reduce noise sensitivity
+  - Filter coefficient defined as `PID_DERIVATIVE_FILTER_ALPHA` in Config.h
 - **Temperature-aware slowdown**:
-    - When approaching max allowed temp (within 5°C), scale down entire PID output
-    - This is the PRIMARY mechanism for preventing overshoot
-  ```cpp
-  float compute(float setpoint, float input, uint32_t currentMillis) {
-      // Calculate PID output normally
-      float output = pTerm + integral + dTerm;
-      output = constrain(output, outMin, outMax);
-      
-      // Scale down when approaching max allowed temp
-      float tempMargin = maxAllowedTemp - input;
-      if (tempMargin < 5.0 && tempMargin > 0) {
-          float scaleFactor = tempMargin / 5.0;  // 0-1 range
-          output *= scaleFactor;
-      }
-      
-      // Emergency stop if over max temp
-      if (input >= maxAllowedTemp) {
-          output = 0;
-      }
-      
-      return output;
-  }
-  ```
+  - When approaching max allowed temp (within margin defined by `PID_TEMP_SLOWDOWN_MARGIN`), scale down entire PID output
+  - This is the PRIMARY mechanism for preventing overshoot
+  - Emergency stop if at or above max temp
+- **Predictive cooling compensation** (NEW):
+  - Tracks cooling rate (°C/s) with exponential moving average
+  - When cooling faster than `MIN_COOLING_RATE`, predicts future temperature
+  - Enhances error term to prevent undershoot during cooldown
+  - Uses `PREDICTIVE_HORIZON_SEC` and `PREDICTIVE_GAIN` constants
 - Derivative on measurement (not error) to avoid setpoint kick
 - `reset()` method to clear state when starting/stopping
-- **Does NOT**: Read sensors, control heater directly, but DOES enforce temperature slowdown
+- Debug methods: `getCoolingRate()`, `getOutputMax()`
+- **Does NOT**: Read sensors, control heater directly, but DOES enforce temperature slowdown and predictive compensation
 
 #### **HeaterControl**
-- Controls heater PWM output (ESP32 LEDC)
+- Controls heater via **software PWM** (not hardware LEDC)
+- **Must be called frequently**: `update(currentMillis)` required in main loop to maintain PWM timing
+- **Software PWM timing**:
+  - Period defined by `HEATER_PWM_PERIOD_MS` in Config.h
+  - Duty cycle: 0-100 (PWM_MIN to PWM_MAX from Config.h)
+  - Tracks cycle start time and pin state internally
 - **Simple relay**: Directly applies PWM value from PID without modification
-- Methods: `start()`, `stop()`, `emergencyStop()`, `setPWM()`, `isRunning()`
-- PWM period: 5 seconds
+- Methods: `begin()`, `start()`, `stop()`, `emergencyStop()`, `setPWM()`, `isRunning()`, `update()`
+- Debug method: `getPinState()` - returns current GPIO state
 - **Does NOT**: Scale or modify PWM values, make safety decisions, read sensors
-- Trusts PID for proper control and SafetyMonitor for emergencies
+- Trusts PID for proper control (including PWM_MAX_PID_OUTPUT limit) and SafetyMonitor for emergencies
 
 #### **SafetyMonitor**
 - **Passive guardian** - monitors but doesn't control
 - Subscribes to all sensor updates via callbacks
-- Checks hard limits:
-    - Max heater temp: 90°C (80°C + 10°C overshoot)
-    - Max box temp: 80°C
-    - Sensor timeout: 5 seconds
+- Checks hard limits (defined in Config.h):
+  - Max heater temp: `MAX_HEATER_TEMP`
+  - Max box temp: `MAX_BOX_TEMP`
+  - Sensor timeout: `SENSOR_TIMEOUT`
 - Triggers `EmergencyStopCallback` on violations
-- Dryer's emergency callback stops heater and transitions to FAILED state
-- **Hardware backup**: 80°C bimetal switch on main power
-- **Does NOT**: Control heater directly, make operational decisions
+- Dryer's emergency callback stops heater, stops fan, and transitions to FAILED state
+- **Hardware backup**: Temperature-rated bimetal switch on main power (physical hardware outside software control)
+- **Does NOT**: Control heater or fan directly, make operational decisions
+
+#### **FanControl** (Optional)
+- Controls cooling fan relay (ON/OFF)
+- **Fan operation rules**:
+  - Starts when heater starts (RUNNING state)
+  - Keeps running when paused (for cooling)
+  - Stops when: finished, failed, reset, or stopped
+- Methods: `start()`, `stop()`, `isRunning()`
+- **Does NOT**: Make decisions about when to run (Dryer does this)
 
 #### **UIController**
 - Owns display, menu controller, button manager
@@ -142,184 +119,43 @@
 - Bridges menu selections to Dryer via callbacks
 - Subscribes to Dryer stats updates for display
 - Triggers sound feedback via SoundController
-- Handles display refresh (pull stats on demand, typically ~200ms)
-- **Button registration pattern**:
-  ```cpp
-  void UIController::setup() {
-      // Register with ButtonManager
-      buttonManager->registerButtonCallback(ButtonType::SET, 
-          [this](ButtonEvent event) {
-              if (event == ButtonEvent::SINGLE_CLICK) {
-                  menuController->handleAction(MenuAction::ENTER);
-                  soundController->playClick();
-              }
-          }
-      );
-      
-      buttonManager->registerButtonCallback(ButtonType::UP,
-          [this](ButtonEvent event) {
-              if (event == ButtonEvent::SINGLE_CLICK) {
-                  menuController->handleAction(MenuAction::UP);
-                  soundController->playClick();
-              }
-          }
-      );
-      
-      buttonManager->registerButtonCallback(ButtonType::DOWN,
-          [this](ButtonEvent event) {
-              if (event == ButtonEvent::SINGLE_CLICK) {
-                  menuController->handleAction(MenuAction::DOWN);
-                  soundController->playClick();
-              }
-          }
-      );
-  }
-  ```
+- Handles display refresh (pull stats on demand)
+- **Optimization**: Dirty flag pattern - only updates display when values change
+- **Timing consistency**: Stores `currentTime` from `update()` for use in callbacks
+- **Two display modes**:
+  - **HOME mode**: Shows stats screens (cycle with UP/DOWN)
+    - BOX_TEMP (default): Large box temp with "B:" prefix
+    - REMAINING: Large remaining time in h:mm:ss
+    - HEATER_TEMP: Large heater temp with "H:" prefix
+  - **MENU mode**: Shows menu navigation
+- **Display layout**:
+  - Line 1.1 (Y=0): State char (R|>|||F|!|P) + Preset abbrev (PLA|PETG|CUST) in top-right
+  - Lines 1.2+2 (Y=8-16): Main value (temperature or time)
+  - Line 3 (Y=16): Timer countdown (mm:ss) + Heater temp
+  - Line 4 (Y=24): Box temp + humidity + target temp
 - **Does NOT**: Make operational decisions, store state, know business logic
 
 #### **MenuController**
 - Isolated menu state machine
 - Handles navigation: `handleAction(ENTER, UP, DOWN, SAVE, CANCEL)`
 - Maintains menu tree structure and current position
-- **Handles value editing** for custom preset parameters
+- **Handles value editing** for custom preset parameters and timer adjustment
 - Fires `MenuSelectionCallback` when user confirms choice or value
-- **Custom preset editing flow**:
-```
-  User enters Custom preset menu
-    ├─> Navigate to "Temp" → ENTER → edit mode
-    │     ├─> UP/DOWN adjusts value (±1°C)
-    │     ├─> Values clamped by min/max temp from Dryer
-    │     └─> ENTER confirms → MenuSelectionCallback(CUSTOM_TEMP, newValue)
-    │                        └─> UIController receives callback
-    │                            └─> Updates Dryer's custom preset temp
-    │
-    ├─> Navigate to "Time" → ENTER → edit mode
-    │     ├─> UP/DOWN adjusts value (±10 min)
-    │     ├─> Values clamped by max time from Dryer
-    │     └─> ENTER confirms → MenuSelectionCallback(CUSTOM_TIME, newValue)
-    │
-    ├─> Navigate to "Max Overshoot" → ENTER → edit mode
-    │     ├─> UP/DOWN adjusts value (±1°C)
-    │     └─> ENTER confirms → MenuSelectionCallback(CUSTOM_OVERSHOOT, newValue)
-    │
-    ├─> Navigate to "Save" → ENTER
-    │     └─> MenuSelectionCallback(SAVE_CUSTOM_PRESET, 0)
-    │         └─> UIController calls Dryer.saveCustomPreset()
-    │             └─> Dryer calls SettingsStorage.saveCustomPreset()
-    │
-    └─> Navigate to "Back" → ENTER
-          └─> Returns to previous menu
-```
-
-* complete menu tree: 
-```
-HOME screen - showing current state and temps
-  - Long press SET - pause/resume
-  - short press UP/DOWN - toggle between stats screens
-  - Short press SET - enters main menu
-    - Status
-      - Short press SET to enter submenu
-        - Start/resume (if READY/PAUSED)
-          - Short press SET to start
-        - Pause (if RUNNING)
-          - Short press SET to pause
-        - Ready (if not READY)
-          - Short press SET to reset into READY
-    - Select Preset
-      - Short press SET to enter submenu - dynamically based on dryer's preset configuration i.e.
-        - PLA (temp, time, overshoot)
-          - Short press SET to select and go level up
-        - PETG (temp, time, overshoot)
-          - Short press SET to select and go level up
-        - ABS (temp, time, overshoot)
-          - Short press SET to select and go level up
-        - Custom (temp, time, overshoot)
-          - Short press SET to select and go level up
-        - long press SET to go level up anytime
-        - Back
-          - Short press SET to go level up
-    - Edit Custom preset
-      - Short press SET to enter submenu
-        - Temp (current custom preset value)
-          - Short press SET to edit
-            - UP/DOWN to adjust (±1°C)
-            - Short press SET to confirm and save value
-        - Time (current custom preset value)
-          - Short press SET to edit
-            - UP/DOWN to adjust (±10 min)
-            - Short press SET to confirm and save value
-        - Max Overshoot (current custom preset value)
-          - Short press SET to edit
-            - UP/DOWN to adjust (±1°C)
-            - Short press SET to confirm and save value
-        - Copy from PLA
-          - Short press SET to copy values from PLA preset to Custom and go level up
-        - Back
-          - Short press SET to go level up
-        - long press SET to go level up anytime
-    - PID (current pid profile name)
-    - Short press SET to enter submenu
-      - UP/DOWN to navigate
-        - SOFT
-          - Short press SET to select and save profile
-        - NORMAL
-          - Short press SET to select and save profile
-        - STRONG
-          - Short press SET to select and save profile
-        - Back
-          - Short press SET to go level up
-        - long press SET to go level up anytime
-    - Sound: On/Off (current value)
-      - Short press SET to toggle and save
-    - System info
-      - Short press SET to enter submenu
-      - UP/DOWN to navigate system config
-        - STATE_SAVE_INTERVAL: current value
-        - PID_UPDATE_INTERVAL: current value
-        - MIN_TEMP: current value
-        - MAX_BOX_TEMP: current value
-        - MAX_HEATER_TEMP: current value
-        - DEFAULT_MAX_OVERSHOOT: current value
-        - MAX_TIME_SECONDS: current value
-        - MIN_TIME_SECONDS: current value
-        - HEATER_PWM_PERIOD_MS: current value
-        - PWM_MAX_PID_OUTPUT: current value
-        - Back
-          - Short press SET to go level up
-        - long press SET to go level up anytime
-   - 
-```
-
-- **Menu item display layouts**:
-
-Submenu/list selection, left-aligned, submenu is endless loop
-```
-prevItem, font size 1
-currentItem, font size 2
-nextItem, font size 1
-```
-
-Value edit, center-aligned
-```
-Item label, font size 1
-4px spacing
-currentValue + unit, font size 2
-```
-
-Info list, left-aligned
-```
-Item label, font size 1
-4px spacing
-Item value, font size 2
-``````
-
+- **Timer adjustment feature**:
+  - Exposed in root menu as "Adjust Timer"
+  - Allows ±10 minute increments
+  - Rounds to nearest 10 minutes
+  - Clamped to MIN_TIME_SECONDS / MAX_TIME_SECONDS
+  - Updates via `setRemainingTime(seconds)` from Dryer stats
 - Returns current menu items for display rendering
+- Menu navigation uses history stack for "Back" functionality
 - **Does NOT**: Execute actions, persist data, know about Dryer internals
 
 #### **ButtonManager**
 - Wraps mathertel/OneButton library
 - Three buttons: SET, UP, DOWN
 - Events: single click, long press
+- Timing constants from Config.h: `BUTTON_DEBOUNCE_MS`, `BUTTON_CLICK_MS`, `BUTTON_LONG_PRESS_MS`
 - Fires button-specific callbacks to whoever registers (UIController)
 - **Does NOT**: Interpret meaning of button presses, know about menu or UI
 
@@ -333,9 +169,9 @@ Item value, font size 2
 #### **SettingsStorage**
 - LittleFS file operations
 - JSON serialization/deserialization (ArduinoJson)
-- Two files:
-    - `/settings.json` - user preferences, custom preset, sound on/off
-    - `/runtime.json` - current run state for power loss recovery
+- Two files (paths defined in Config.h):
+  - Settings file - user preferences, custom preset, sound on/off
+  - Runtime file - current run state for power loss recovery
 - Methods: `saveSettings()`, `loadSettings()`, `saveRuntimeState()`, `loadRuntimeState()`, `clearRuntimeState()`, `saveCustomPreset()`, `loadCustomPreset()`
 - **Does NOT**: Validate settings, make policy decisions
 
@@ -344,14 +180,17 @@ Item value, font size 2
 #### Sensor Reading Flow
 ```
 SensorManager.update(currentMillis)
-  ├─> DS18B20 read (500ms) ─> cache ─> callback(heaterTemp, timestamp)
-  │                                         ├─> SafetyMonitor.notifyHeaterTemp()
-  │                                         ├─> PIDController.compute() 
-  │                                         │     └─> (with temp-aware slowdown)
-  │                                         │         └─> HeaterControl.setPWM()
-  │                                         └─> Display (via pull on refresh)
+  ├─> DS18B20 async read (HEATER_TEMP_INTERVAL)
+  │     ├─> requestConversion() → wait → isConversionReady() → read()
+  │     └─> cache → callback(heaterTemp, timestamp)
+  │                    ├─> SafetyMonitor.notifyHeaterTemp()
+  │                    ├─> PIDController.compute()
+  │                    │     └─> (with temp-aware slowdown + predictive cooling)
+  │                    │         └─> Returns PWM (capped to PWM_MAX_PID_OUTPUT)
+  │                    │             └─> Dryer → HeaterControl.setPWM()
+  │                    └─> Display (via pull on refresh)
   │
-  └─> AM2320 read (2000ms) ─> cache ─> callback(boxTemp, humidity, timestamp)
+  └─> AM2320 read (BOX_DATA_INTERVAL) → cache → callback(boxTemp, humidity, timestamp)
                                           ├─> SafetyMonitor.notifyBoxTemp()
                                           └─> Display (via pull on refresh)
 ```
@@ -372,13 +211,40 @@ Button Press (hardware)
                                   └─> StatsUpdateCallback → Display
 ```
 
+#### Timer Adjustment Flow
+```
+User enters "Adjust Timer" menu item
+  └─> MenuController shows current remaining time (rounded to 10min)
+      └─> User adjusts with UP/DOWN (±10 min increments)
+          └─> User presses SET to confirm
+              └─> MenuSelectionCallback(ADJUST_TIMER, newMinutes)
+                  └─> UIController calculates delta: (newValue - current)
+                      └─> Dryer.adjustRemainingTime(deltaSeconds)
+                          ├─> Clamps to MIN_TIME_SECONDS / MAX_TIME_SECONDS
+                          ├─> Updates targetTimeSeconds
+                          └─> StatsUpdateCallback → MenuController.setRemainingTime()
+```
+
+#### Preset Change During Run Flow
+```
+User changes preset while RUNNING or PAUSED
+  └─> Dryer.selectPreset(newPreset)
+      ├─> Loads new preset (temp, time, overshoot)
+      ├─> Updates PIDController.setMaxAllowedTemp()
+      ├─> Updates SafetyMonitor limits
+      ├─> Resets timer: startTime = currentTime
+      ├─> Resets totalPausedDuration = 0
+      └─> If PAUSED: also updates pausedTime = currentTime
+```
+
 #### Emergency Flow
 ```
-SensorManager detects overheat
-  └─> SafetyMonitor.notifyHeaterTemp(95°C)
+SensorManager detects overheat or SafetyMonitor timeout
+  └─> SafetyMonitor.notifyHeaterTemp(95°C) or update() timeout
       └─> EmergencyStopCallback
           └─> Dryer emergency handler
               ├─> HeaterControl.emergencyStop()
+              ├─> FanControl.stop() (if present)
               ├─> Dryer.transitionToState(FAILED)
               ├─> SoundController.playAlarm()
               └─> SettingsStorage.saveEmergencyState()
@@ -395,7 +261,7 @@ SensorManager detects overheat
 - **POWER_RECOVERED**: Recovered from power loss, awaiting user action
 
 #### State Persistence
-- Save to LittleFS every minute during RUNNING
+- Save to LittleFS at interval defined by `STATE_SAVE_INTERVAL` during RUNNING
 - Include: state, elapsed time, target temp/time, active preset, timestamp
 - On boot: check for valid runtime state
 - If found and recent RUNNING state after power on: transition to POWER_RECOVERED
@@ -403,82 +269,121 @@ SensorManager detects overheat
 
 ### 6. Timing Specifications
 
-| Component | Update Rate | Notes |
-|-----------|-------------|-------|
-| Dryer.update() | Every loop | Called from main loop() |
-| SensorManager (heater) | 500ms | DS18B20 reading |
-| SensorManager (box) | 2000ms | AM2320 reading |
-| PID compute | 500ms | Triggered by heater temp callback |
-| HeaterControl PWM period | 5000ms | LEDC period |
-| State persistence | 1000ms | Only during RUNNING |
-| Display refresh | ~200ms | Pull current stats |
-| Safety check | Every sensor update + timeout check |
+All timing intervals are defined in Config.h and should be referenced by constant name:
+
+| Component | Interval Constant | Purpose |
+|-----------|------------------|---------|
+| Dryer.update() | - | Called every loop iteration |
+| SensorManager (heater) | `HEATER_TEMP_INTERVAL` | DS18B20 async conversion + read cycle |
+| SensorManager (box) | `BOX_DATA_INTERVAL` | AM2320 reading interval |
+| PID compute | `PID_UPDATE_INTERVAL` | Triggered by heater temp callback |
+| HeaterControl PWM period | `HEATER_PWM_PERIOD_MS` | Software PWM cycle duration |
+| HeaterControl.update() | - | Must be called every loop for PWM timing |
+| State persistence | `STATE_SAVE_INTERVAL` | Only during RUNNING |
+| Display refresh | `DISPLAY_UPDATE_INTERVAL` | Pull current stats |
+| Safety timeout | `SENSOR_TIMEOUT` | Max time between sensor readings |
+
+**Critical**: HeaterControl requires frequent `update()` calls (ideally < 100ms) to maintain accurate software PWM timing.
 
 ### 7. Safety Architecture
 
 #### Defense in Depth
-1. **PID temperature-aware slowdown**: Primary mechanism - scales output within 5°C of max temp
-2. **PID emergency stop**: Zero output if at or above max allowed temp
-3. **SafetyMonitor**: Software watchdog with emergency stop callback
-4. **Hardware bimetal switch**: 80°C physical cutoff on main power
+1. **PID temperature-aware slowdown**: Primary mechanism - scales output within `PID_TEMP_SLOWDOWN_MARGIN` of max temp
+2. **PID predictive cooling**: Prevents undershoot by anticipating temperature drop during cooldown
+3. **PID output limit**: Capped to `PWM_MAX_PID_OUTPUT` (e.g., 50% of full scale) to prevent thermal momentum overshoot
+4. **PID emergency stop**: Zero output if at or above max allowed temp
+5. **SafetyMonitor**: Software watchdog with emergency stop callback
+6. **Hardware bimetal switch**: Physical temperature cutoff on main power (outside software)
 
 #### Safety Limits
-- Max heater temp: 90°C (80°C target + 10°C overshoot)
-- Max box temp: 80°C
-- Sensor timeout: 5 seconds
-- Max drying time: 10 hours
+All limits defined in Config.h:
+- Max heater temp: `MAX_HEATER_TEMP`
+- Max box temp: `MAX_BOX_TEMP`
+- Sensor timeout: `SENSOR_TIMEOUT`
+- Max drying time: `MAX_TIME_SECONDS`
+- PID output limit: `PWM_MAX_PID_OUTPUT`
 
 ### 8. File Organization
 
 ```
-src/
-├── main.cpp                          # Setup and loop
-├── Dryer.h                           # Main orchestrator
-├── Types.h                           # Shared structs/enums/typedefs
-├── Config.h                          # Pin definitions, constants
-├── ComponentFactory.h                # Production/Mock factories
+project_root/
+├── platformio.ini                    # PlatformIO configuration (3 environments)
+├── specification.MD                  # This file
 │
-├── interfaces/
-│   ├── ISensorManager.h
-│   ├── IHeaterControl.h
-│   ├── IPIDController.h
-│   ├── ISafetyMonitor.h
-│   ├── ISettingsStorage.h
-│   ├── IDisplay.h
-│   ├── IMenuController.h
-│   └── ISoundController.h
+├── src/
+│   ├── main.cpp                      # Setup, loop, serial command handler
+│   ├── Dryer.h                       # Main orchestrator
+│   ├── Types.h                       # Shared structs/enums/typedefs
+│   ├── Config.h                      # Pin definitions, constants (all timing/limits)
+│   ├── ComponentFactory.h            # Production/Mock factories
+│   │
+│   ├── interfaces/
+│   │   ├── IBoxTempHumiditySensor.h
+│   │   ├── IButtonManager.h
+│   │   ├── IDisplay.h
+│   │   ├── IDryer.h
+│   │   ├── IFanControl.h
+│   │   ├── IHeaterControl.h
+│   │   ├── IHeaterTempSensor.h
+│   │   ├── IMenuController.h
+│   │   ├── IPIDController.h
+│   │   ├── ISafetyMonitor.h
+│   │   ├── ISensorManager.h
+│   │   ├── ISettingsStorage.h
+│   │   └── ISoundController.h
+│   │
+│   ├── sensors/
+│   │   ├── SensorManager.h           # Multi-sensor coordinator with async reads
+│   │   ├── HeaterTempSensor.h        # DS18B20 wrapper (async pattern)
+│   │   └── BoxTempHumiditySensor.h   # AM2320 wrapper
+│   │
+│   ├── control/
+│   │   ├── HeaterControl.h           # Software PWM controller
+│   │   ├── PIDController.h           # PID with anti-windup, predictive cooling
+│   │   ├── SafetyMonitor.h           # Safety watchdog
+│   │   └── FanControl.h              # Simple fan relay control
+│   │
+│   ├── storage/
+│   │   └── SettingsStorage.h         # LittleFS + JSON persistence
+│   │
+│   └── userInterface/
+│       ├── UIController.h            # UI coordinator with dirty flag optimization
+│       ├── MenuController.h          # Menu state machine with timer adjustment
+│       ├── ButtonManager.h           # Button event handling
+│       ├── OLEDDisplay.h             # Display driver
+│       └── SoundController.h         # Buzzer/tone player
 │
-├── sensors/
-│   ├── SensorManager.h               # Multi-sensor coordinator
-│   ├── DS18B20Sensor.h               # Heater temp sensor wrapper
-│   └── AM2320Sensor.h                # Box temp/humidity wrapper
-│
-├── control/
-│   ├── HeaterControl.h               # PWM heater control
-│   ├── PIDController.h               # PID algorithm with anti-windup
-│   └── SafetyMonitor.h               # Safety watchdog
-│
-├── storage/
-│   └── SettingsStorage.h             # LittleFS + JSON persistence
-│
-└── userInterface/
-    ├── UIController.h                # UI coordinator
-    ├── MenuController.h              # Menu state machine
-    ├── ButtonManager.h               # Button event handling
-    ├── OLEDDisplay.h                 # Display driver
-    └── SoundController.h             # Buzzer/tone player
-
-test/
-├── test_dryer/
-├── test_sensor_manager/
-├── test_pid_controller/
-├── test_safety_monitor/
-├── test_menu_controller/
-└── mocks/
-    ├── MockSensorManager.h
-    ├── MockHeaterControl.h
-    ├── MockPIDController.h
-    └── ...
+└── test/
+    ├── README
+    │
+    ├── mocks/
+    │   ├── arduino_mock.h
+    │   ├── MockBoxTempHumiditySensor.h
+    │   ├── MockDisplay.h
+    │   ├── MockDryer.h
+    │   ├── MockFanControl.h
+    │   ├── MockHeaterControl.h
+    │   ├── MockHeaterTempSensor.h
+    │   ├── MockPIDController.h
+    │   ├── MockSafetyMonitor.h
+    │   ├── MockSensorManager.h
+    │   ├── MockSettingsStorage.h
+    │   └── MockSoundController.h
+    │
+    ├── test_display/
+    │   └── test_display.cpp
+    ├── test_dryer_integration/
+    │   └── test_dryer_integration.cpp
+    ├── test_fan_control/
+    │   └── test_fan_control.cpp
+    ├── test_heater_control/
+    │   └── test_heater_control.cpp
+    ├── test_pid_controller/
+    │   └── test_pid_controller.cpp
+    ├── test_safety_monitor/
+    │   └── test_safety_monitor.cpp
+    └── test_sensor_integration/
+        └── test_sensor_integration.cpp
 ```
 
 ### 9. Coding Conventions
@@ -486,108 +391,25 @@ test/
 #### Naming
 - **Interfaces**: Prefix with `I` (e.g., `ISensorManager`)
 - **Callbacks**: Suffix with `Callback` (e.g., `StateChangeCallback`)
-- **Constants**: `UPPER_SNAKE_CASE`
+- **Constants**: `UPPER_SNAKE_CASE` (all defined in Config.h)
 - **Private members**: camelCase with no prefix
 - **Methods**: camelCase
 - **Enums**: PascalCase for enum class, UPPER_SNAKE_CASE for values
 
-#### Patterns
-```cpp
-// Callback type definition
-using SensorUpdateCallback = std::function<void(float temp, uint32_t timestamp)>;
-
-// Callback registration
-void registerSensorCallback(SensorUpdateCallback callback);
-
-// Callback storage
-std::vector<SensorUpdateCallback> callbacks;
-
-// Callback invocation
-for (auto& callback : callbacks) {
-    if (callback) callback(temp, millis());
-}
-
-// Interface definition
-class ISensorManager {
-public:
-    virtual void update(uint32_t currentMillis) = 0;
-    virtual float getHeaterTemp() const = 0;
-    virtual ~ISensorManager() = default;
-};
-
-// Implementation
-class SensorManager : public ISensorManager {
-private:
-    float cachedTemp;
-public:
-    void update(uint32_t currentMillis) override;
-    float getHeaterTemp() const override { return cachedTemp; }
-};
-```
-
-#### Factory Pattern
-```cpp
-class ISensorManagerFactory {
-public:
-    virtual ISensorManager* create() = 0;
-    virtual ~ISensorManagerFactory() = default;
-};
-
-class ProductionSensorManagerFactory : public ISensorManagerFactory {
-public:
-    ISensorManager* create() override {
-        return new SensorManager(HEATER_PIN, SDA_PIN, SCL_PIN);
-    }
-};
-
-class MockSensorManagerFactory : public ISensorManagerFactory {
-public:
-    ISensorManager* create() override {
-        return new MockSensorManager();
-    }
-};
-```
-
 ### 10. Testing Guidelines
 
 #### Unit Test Structure
-```cpp
-void test_pid_accumulates_integral() {
-    // Arrange
-    PIDController pid;
-    pid.setProfile(PIDProfile::NORMAL);
-    pid.setLimits(0, 255);
-    
-    // Act
-    float output1 = pid.compute(50.0, 45.0, 0);
-    float output2 = pid.compute(50.0, 45.0, 1000);
-    
-    // Assert
-    TEST_ASSERT_TRUE(output2 > output1);
-}
-
-void test_pid_slows_near_max_temp() {
-    // Arrange
-    PIDController pid;
-    pid.setProfile(PIDProfile::STRONG);
-    pid.setMaxAllowedTemp(90.0);
-    
-    // Act - at 87°C (3°C from max)
-    float output87 = pid.compute(90.0, 87.0, 0);
-    
-    // Act - at 50°C (40°C from max)
-    float output50 = pid.compute(90.0, 50.0, 1000);
-    
-    // Assert - output at 87°C should be scaled down
-    TEST_ASSERT_TRUE(output87 < output50 * 0.65);  // Scaled by ~0.6
-}
-```
+- Arrange-Act-Assert pattern
+- Use mocks for all dependencies
+- Time injection for deterministic tests
+- No hardware dependencies in tests
+- Test files named `test_<component>/test_<component>.cpp`
 
 #### Mock Components
 - Implement same interface as production
 - Allow setting return values
 - Track method calls for verification
-- No hardware dependencies
+- Store in `test/mocks/` directory
 
 #### Time-Dependent Tests
 - Always pass time as parameter
@@ -596,60 +418,36 @@ void test_pid_slows_near_max_temp() {
 
 ### 11. Configuration
 
-#### Hardware Pins (Config.h)
-```cpp
-// Heater
-#define HEATER_PWM_PIN 25
-#define HEATER_PWM_CHANNEL 0
-#define HEATER_PWM_FREQ 1000
+All configuration values are centralized in `Config.h`. The specification references constants by name, not by value, to maintain single source of truth.
 
-// Sensors
-#define HEATER_TEMP_PIN 4        // DS18B20
-#define BOX_SENSOR_SDA 21        // AM2320
-#define BOX_SENSOR_SCL 22
+#### Hardware Configuration
+- Board selection via `#define ESP32_C3_BOARD` or `#define ESP32_S3_BOARD`
+- Pin assignments for each board
+- I2C configuration
 
-// Buttons
-#define BUTTON_SET_PIN 32
-#define BUTTON_UP_PIN 33
-#define BUTTON_DOWN_PIN 34
+#### Operational Limits
+- Temperature ranges (MIN_TEMP, MAX_BOX_TEMP, MAX_HEATER_TEMP)
+- Time limits (MIN_TIME_SECONDS, MAX_TIME_SECONDS)
+- PWM limits (PWM_MIN, PWM_MAX, PWM_MAX_PID_OUTPUT)
+- Overshoot margins
 
-// Display (I2C OLED)
-#define OLED_SDA 21
-#define OLED_SCL 22
+#### Timing Intervals
+- Sensor reading rates
+- PID update interval
+- State save interval
+- Display refresh interval
+- Button timing
+- Timeout values
 
-// Sound
-#define BUZZER_PIN 26
-```
+#### PID Configuration
+- Three tuning profiles (SOFT, NORMAL, STRONG)
+- Derivative filter coefficient
+- Temperature slowdown margin
+- Predictive cooling parameters
 
-#### Constants
-```cpp
-// Constraints
-constexpr uint32_t MAX_TIME_SECONDS = 36000;  // 10 hours
-constexpr float MIN_TEMP = 30.0;
-constexpr float MAX_BOX_TEMP = 80.0;
-constexpr float MAX_HEATER_TEMP = 90.0;
-
-// Update intervals
-constexpr uint32_t HEATER_TEMP_INTERVAL = 500;
-constexpr uint32_t BOX_DATA_INTERVAL = 2000;
-constexpr uint32_t PID_UPDATE_INTERVAL = 500;
-constexpr uint32_t STATE_SAVE_INTERVAL = 1000;
-
-// PWM
-constexpr uint32_t PWM_PERIOD_MS = 5000;
-constexpr uint8_t PWM_RESOLUTION = 8;  // 0-255
-
-// PID Profiles
-enum class PIDProfile {
-    SOFT,    // Kp=2.0, Ki=0.5, Kd=1.0
-    NORMAL,  // Kp=4.0, Ki=1.0, Kd=2.0
-    STRONG   // Kp=6.0, Ki=1.5, Kd=3.0
-};
-
-// PID Anti-windup and filtering
-constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.2;
-constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;  // Start scaling within 5°C
-```
+#### Preset Defaults
+- PLA, PETG, ABS, and Custom presets
+- Temperature, time, and overshoot for each
 
 ### 12. Dependencies
 
@@ -660,7 +458,8 @@ constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;  // Start scaling within 5°C
 - **Wire**: I2C communication
 - **OneWire + DallasTemperature**: DS18B20
 - **Adafruit_AM2320**: Temperature/humidity sensor
-- **Adafruit_SSD1306** or similar: OLED display
+- **Adafruit_SSD1306**: OLED display
+- **Adafruit_GFX**: Graphics library
 
 #### Unity PIO Testing
 - Unity test framework
@@ -671,21 +470,21 @@ constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;  // Start scaling within 5°C
 #### Sensor Failures
 - SensorManager detects invalid readings
 - Fires `SensorErrorCallback`
-- SafetyMonitor receives error and triggers emergency stop
+- SafetyMonitor receives error and triggers emergency stop (if timeout exceeded)
 - System transitions to FAILED state
 
 #### Safety Violations
 - SafetyMonitor detects limit breach
 - Fires `EmergencyStopCallback`
-- Dryer immediately stops heater
+- Dryer immediately stops heater and fan
 - Transitions to FAILED state
 - Saves emergency state to storage
 - Plays alarm sound
 
 #### Power Loss
-- Runtime state saved every second
+- Runtime state saved at `STATE_SAVE_INTERVAL` intervals
 - On boot, check for recent state file
-- If valid (<5 min old), load and transition to POWER_RECOVERED
+- If valid (< `POWER_RECOVERY_TIMEOUT`), load and transition to POWER_RECOVERED
 - Display shows recovery information
 - User must acknowledge before continuing
 
@@ -701,6 +500,7 @@ When implementing a new component:
 - [ ] Single `.h` file (no `.cpp`)
 - [ ] Constructor takes dependencies as pointers
 - [ ] `update(uint32_t currentMillis)` method if time-dependent
+- [ ] **For HeaterControl specifically**: Must call `update()` frequently (< 100ms) for software PWM
 - [ ] Use `std::function<>` for callbacks
 - [ ] Provide `register*Callback()` methods
 - [ ] Store callbacks in `std::vector<>`
@@ -709,10 +509,12 @@ When implementing a new component:
 - [ ] Write unit tests with time injection
 - [ ] Document responsibilities in header comment
 - [ ] Place implementation in appropriate folder (sensors/, control/, userInterface/, storage/)
+- [ ] Reference Config.h constants by name, never hardcode values
+- [ ] For fan control: Optional dependency (nullptr check in consuming code)
 
 ---
 
-## Example Component Template
+## Component Template
 
 ```cpp
 // interfaces/IComponentName.h
@@ -749,6 +551,7 @@ public:
 #define COMPONENT_NAME_H
 
 #include "interfaces/IComponentName.h"
+#include "Config.h"
 #include <vector>
 
 class ComponentName : public IComponentName {
@@ -766,7 +569,7 @@ public:
     ComponentName() : state(0) {}
     
     void update(uint32_t currentMillis) override {
-        // Implementation
+        // Implementation using Config.h constants
     }
     
     void doSomething(int param) override {
@@ -788,673 +591,560 @@ public:
 
 ---
 
+## Menu Tree Structure
+
+```
+HOME screen - showing current state and temps
+  - Long press SET - pause/resume
+  - Short press UP/DOWN - toggle between stats screens (BOX_TEMP, REMAINING, HEATER_TEMP)
+  - Short press SET - enters main menu
+    - Status
+      - Start/resume (if READY/PAUSED)
+      - Pause (if RUNNING)
+      - Ready (if not READY)
+      - Back
+    - Select Preset
+      - PLA (temp, time, overshoot)
+      - PETG (temp, time, overshoot)
+      - ABS (temp, time, overshoot)
+      - Custom (temp, time, overshoot)
+      - Back
+    - Edit Custom preset
+      - Temp (current value) - ±1°C
+      - Time (current value) - ±10 min
+      - Max Overshoot (current value) - ±1°C
+      - Copy from PLA
+      - Back
+    - Adjust Timer (current remaining time rounded to 10min)
+      - Value edit: ±10 min increments
+      - Clamped to MIN_TIME_SECONDS / MAX_TIME_SECONDS
+    - PID (current profile name)
+      - SOFT
+      - NORMAL
+      - STRONG
+      - Back
+    - Sound: On/Off (current value)
+      - Toggle and save
+    - System Info
+      - Scrollable list of Config.h constants with values
+      - Back
+```
+
+**Menu Navigation**:
+- UP/DOWN: Navigate items (endless loop)
+- SET: Enter/confirm
+- LONG PRESS SET: Go back one level
+- In edit mode: UP/DOWN adjust value, SET confirms
+
+---
+
 ## PID Controller Detailed Specifications
 
 ### Anti-Windup Implementation
 ```cpp
-class PIDController : public IPIDController {
-private:
-    float integral = 0.0;
-    float lastOutput = 0.0;
-    
-public:
-    float compute(float setpoint, float input, uint32_t currentMillis) override {
-        // ... calculate dt, error, pTerm ...
-        
-        // Integral term with anti-windup
-        float proposedIntegral = integral + ki * error * dtSec;
-        
-        // Calculate output with proposed integral
-        float proposedOutput = pTerm + proposedIntegral + dTerm;
-        
-        // Check if output would saturate
-        if (proposedOutput > outMax) {
-            // Don't let integral grow if we're already maxed out
-            if (error > 0) {
-                // Error is positive but output is maxed - don't accumulate
-                proposedIntegral = integral;
-            }
-        } else if (proposedOutput < outMin) {
-            // Don't let integral shrink if we're already at minimum
-            if (error < 0) {
-                // Error is negative but output is at min - don't accumulate
-                proposedIntegral = integral;
-            }
-        }
-        
-        // Apply the integral
-        integral = proposedIntegral;
-        
-        // Clamp integral to reasonable bounds
-        integral = constrain(integral, outMin, outMax);
-        
-        // Calculate final output
-        float output = pTerm + integral + dTerm;
-        output = constrain(output, outMin, outMax);
-        
-        lastOutput = output;
-        return output;
-    }
-};
+// Integral term with anti-windup
+float proposedIntegral = integral + ki * error * dtSec;
+
+// Calculate output with proposed integral
+float proposedOutput = pTerm + proposedIntegral + dTerm;
+
+// Check if output would saturate
+if (proposedOutput > outMax && error > 0) {
+    // Don't accumulate if maxed out with positive error
+    proposedIntegral = integral;
+} else if (proposedOutput < outMin && error < 0) {
+    // Don't accumulate if at min with negative error
+    proposedIntegral = integral;
+}
+
+integral = proposedIntegral;
+integral = constrain(integral, outMin, outMax);
 ```
 
 ### Derivative Smoothing (Low-Pass Filter)
 ```cpp
-class PIDController : public IPIDController {
-private:
-    float filteredDerivative = 0.0;
-    static constexpr float DERIVATIVE_FILTER_ALPHA = 0.2;  // 0-1, lower = more smoothing
-    
-public:
-    float compute(float setpoint, float input, uint32_t currentMillis) override {
-        // ... calculate pTerm, integral ...
-        
-        // Calculate raw derivative (on measurement, not error)
-        float dInput = (input - lastInput) / dtSec;
-        float rawDerivative = -kd * dInput;  // Negative because we want to oppose change
-        
-        // Apply exponential moving average (low-pass filter)
-        // filtered[n] = α * raw[n] + (1-α) * filtered[n-1]
-        filteredDerivative = DERIVATIVE_FILTER_ALPHA * rawDerivative 
-                           + (1.0 - DERIVATIVE_FILTER_ALPHA) * filteredDerivative;
-        
-        float dTerm = filteredDerivative;
-        
-        // ... rest of calculation ...
-    }
-    
-    void reset() override {
-        integral = 0.0;
-        filteredDerivative = 0.0;  // Reset filter state too
-        lastInput = 0.0;
-        firstRun = true;
-    }
-};
+// Calculate raw derivative (on measurement, not error)
+float dInput = (input - lastInput) / dtSec;
+float rawDerivative = -kd * dInput;  // Negative to oppose change
+
+// Apply exponential moving average
+// filtered[n] = α * raw[n] + (1-α) * filtered[n-1]
+filteredDerivative = PID_DERIVATIVE_FILTER_ALPHA * rawDerivative 
+                   + (1.0 - PID_DERIVATIVE_FILTER_ALPHA) * filteredDerivative;
 ```
 
 ### Temperature-Aware Slowdown
 ```cpp
-class PIDController : public IPIDController {
+// Normal PID calculation
+float output = pTerm + integral + dTerm;
+output = constrain(output, outMin, outMax);
+
+// Temperature-aware slowdown
+float tempMargin = maxAllowedTemp - input;
+
+if (input >= maxAllowedTemp) {
+    // Emergency: stop completely
+    output = 0.0;
+    integral = 0.0;
+} else if (tempMargin < PID_TEMP_SLOWDOWN_MARGIN) {
+    // Approaching max: scale output proportionally
+    float scaleFactor = tempMargin / PID_TEMP_SLOWDOWN_MARGIN;
+    output *= scaleFactor;
+    integral *= scaleFactor;  // Also scale integral to prevent windup
+}
+```
+
+### Predictive Cooling Compensation (NEW)
+```cpp
+// Track cooling rate with exponential moving average
+float rawCoolingRate = (input - lastInput) / dtSec;  // °C/s
+coolingRate = COOLING_RATE_FILTER_ALPHA * rawCoolingRate
+            + (1.0 - COOLING_RATE_FILTER_ALPHA) * coolingRate;
+
+// If cooling faster than threshold, predict future temperature
+if (coolingRate < MIN_COOLING_RATE) {  // e.g., -0.08 °C/s
+    float predictedTemp = input + (coolingRate * PREDICTIVE_HORIZON_SEC);
+    float predictedError = setpoint - predictedTemp;
+    
+    // If prediction shows undershoot, enhance error now
+    if (predictedError > error) {
+        error = error + (predictedError - error) * PREDICTIVE_GAIN;
+    }
+}
+
+// Use enhanced error for proportional term
+float pTerm = kp * error;
+```
+
+**Constants** (all defined in Config.h):
+- `COOLING_RATE_FILTER_ALPHA`: Filter coefficient for cooling rate smoothing (e.g., 0.7)
+- `MIN_COOLING_RATE`: Threshold to trigger prediction (e.g., -0.08 °C/s)
+- `PREDICTIVE_HORIZON_SEC`: How far ahead to predict (e.g., 10 seconds)
+- `PREDICTIVE_GAIN`: Amplification factor for predicted error (e.g., 1.5)
+
+**Purpose**: Prevents temperature undershoot during cooldown by anticipating the thermal inertia of the system. When the temperature is dropping rapidly (cooling faster than threshold), the algorithm predicts where it will be in the near future and increases the heating response accordingly.
+
+---
+
+## Software PWM Implementation Details
+
+HeaterControl uses software timing instead of hardware LEDC to achieve long PWM periods suitable for SSR relay longevity.
+
+### Implementation Pattern
+```cpp
+class HeaterControl : public IHeaterControl {
 private:
-    float maxAllowedTemp = 90.0;
-    static constexpr float TEMP_SLOWDOWN_MARGIN = 5.0;  // Start scaling within 5°C
+    uint32_t cycleStartTime;
+    bool pinState;
+    uint8_t currentPWM;
     
 public:
-    void setMaxAllowedTemp(float maxTemp) {
-        maxAllowedTemp = maxTemp;
-    }
-    
-    float compute(float setpoint, float input, uint32_t currentMillis) override {
-        // Normal PID calculation
-        float output = pTerm + integral + dTerm;
-        output = constrain(output, outMin, outMax);
+    void update(uint32_t currentMillis) override {
+        if (!running) return;
         
-        // Temperature-aware slowdown
-        float tempMargin = maxAllowedTemp - input;
+        // Calculate position in PWM cycle
+        uint32_t elapsed = currentMillis - cycleStartTime;
         
-        if (input >= maxAllowedTemp) {
-            // Emergency: at or above max temp, stop completely
-            output = 0.0;
-            // Also stop integral accumulation
-            integral = 0.0;
-        } else if (tempMargin < TEMP_SLOWDOWN_MARGIN) {
-            // Approaching max temp: scale output proportionally
-            // At 5°C margin: scale = 1.0 (100%)
-            // At 0°C margin: scale = 0.0 (0%)
-            float scaleFactor = tempMargin / TEMP_SLOWDOWN_MARGIN;
-            output *= scaleFactor;
-            
-            // Also slow down integral accumulation when near limit
-            // This prevents integral windup when we're limiting output
-            integral *= scaleFactor;
+        // Reset cycle if period elapsed
+        if (elapsed >= HEATER_PWM_PERIOD_MS) {
+            cycleStartTime = currentMillis;
+            elapsed = 0;
         }
         
-        lastInput = input;
-        lastTime = currentMillis;
+        // Calculate ON time for this cycle
+        uint32_t onTimeMs = (HEATER_PWM_PERIOD_MS * currentPWM) / PWM_MAX;
         
-        return output;
+        // Determine desired pin state
+        bool shouldBeHigh = (elapsed < onTimeMs);
+        
+        // Only update GPIO if state needs to change
+        if (shouldBeHigh != pinState) {
+            pinState = shouldBeHigh;
+            digitalWrite(pwmPin, pinState ? HIGH : LOW);
+        }
     }
 };
+```
+
+**Critical Requirements**:
+- `update()` must be called frequently (< 100ms intervals) for accurate timing
+- PWM period defined by `HEATER_PWM_PERIOD_MS` (typically 2000-5000ms for SSR)
+- Duty cycle: 0-100 mapped to 0-`PWM_MAX` from Config.h
+- Pin state only changes when necessary (not every update)
+
+**Advantages over hardware PWM**:
+- Can achieve very long periods (>1 second) unsuitable for hardware LEDC
+- No conflict with other PWM channels
+- Easy to debug and verify timing
+
+**Disadvantages**:
+- Requires frequent loop execution
+- Not suitable for high-frequency PWM
+- Timing accuracy depends on loop consistency
+
+---
+
+## Display Layout Specifications
+
+### HOME Mode - Stats Screens
+
+**Screen 1: BOX_TEMP (Default)**
+```
+Line 1.1 (Y=0):  [State] __________ [Preset]
+                  R/>/|/F/!/P       PLA/PETG/CUST
+Line 1.2 (Y=8):  B:
+Lines 1.2+2:      [Box Temp]°C
+                  (size 2 font)
+Line 3 (Y=16):   [mm:ss] _____ H:[Heater]°C
+Line 4 (Y=24):   B:[Box]°C [Hum]% /[Target]°C
+```
+
+**Screen 2: REMAINING**
+```
+Line 1.1 (Y=0):  [State] __________ [Preset]
+Lines 1.2+2:      [h:mm:ss]
+                  (size 2 font, remaining time)
+Line 3 (Y=16):   [mm:ss] _____ H:[Heater]°C
+Line 4 (Y=24):   B:[Box]°C [Hum]% /[Target]°C
+```
+
+**Screen 3: HEATER_TEMP**
+```
+Line 1.1 (Y=0):  [State] __________ [Preset]
+Line 1.2 (Y=8):  H:
+Lines 1.2+2:      [Heater Temp]°C
+                  (size 2 font)
+Line 3 (Y=16):   [mm:ss] _____ H:[Heater]°C
+Line 4 (Y=24):   B:[Box]°C [Hum]% /[Target]°C
+```
+
+**State Characters**:
+- `R` = READY
+- `>` = RUNNING
+- `|` = PAUSED
+- `F` = FINISHED
+- `!` = FAILED
+- `P` = POWER_RECOVERED
+
+**Preset Abbreviations**:
+- `PLA` = PLA preset
+- `PETG` = PETG preset
+- `CUST` = Custom preset
+
+### MENU Mode - Navigation
+
+**Submenu List (Left-aligned, endless loop)**
+```
+prevItem      (font size 1)
+currentItem   (font size 2, highlighted)
+nextItem      (font size 1)
+```
+
+**Value Edit (Center-aligned)**
+```
+Item label    (font size 1)
+[4px spacing]
+currentValue + unit (font size 2)
+```
+
+**System Info List (Left-aligned)**
+```
+Item label    (font size 1)
+[4px spacing]
+Item value    (font size 2)
 ```
 
 ---
 
-## Menu Controller Detailed Specifications
+## Timer Adjustment Feature
 
-### Menu Structure Definition
+### User Flow
+1. User navigates to "Adjust Timer" in root menu
+2. MenuController displays current remaining time rounded to nearest 10 minutes
+3. User adjusts with UP/DOWN buttons (±10 minute increments)
+4. Value is visually clamped to `MIN_TIME_SECONDS` / `MAX_TIME_SECONDS` (converted to minutes for display)
+5. User presses SET to confirm
+6. MenuSelectionCallback fires with `MenuPath::ADJUST_TIMER` and new value in minutes
+7. UIController receives callback, calculates delta from current remaining time
+8. Calls `Dryer.adjustRemainingTime(deltaSeconds)`
+9. Dryer clamps the result and updates `targetTimeSeconds`
+10. Stats update callback refreshes MenuController with new remaining time
+
+### Implementation Notes
+- Timer adjustment works in any state (READY, RUNNING, PAUSED)
+- When RUNNING: Changes take effect immediately, affects when FINISHED state is reached
+- When PAUSED: Changes take effect when resumed
+- When READY: Sets the target time for when start is pressed
+- Minimum adjustment: 10 minutes
+- Values rounded to nearest 10 minutes for UI simplicity
+- Internal timing remains precise (second resolution)
+
+### Dryer Method
 ```cpp
-// Types.h
-enum class MenuPath {
-    ROOT,
+void adjustRemainingTime(int32_t deltaSeconds) override {
+    // Calculate new target time
+    int32_t newTargetTime = (int32_t)targetTimeSeconds + deltaSeconds;
     
-    // Status submenu
-    STATUS,
-    STATUS_START,
-    STATUS_PAUSE,
-    STATUS_RESET,
+    // Clamp to valid range
+    newTargetTime = constrain(newTargetTime, 
+                              MIN_TIME_SECONDS, 
+                              MAX_TIME_SECONDS);
     
-    // Preset submenu
-    PRESET,
-    PRESET_PLA,
-    PRESET_PETG,
-    PRESET_CUSTOM,
-    
-    // Custom preset submenu
-    CUSTOM_TEMP,
-    CUSTOM_TIME,
-    CUSTOM_OVERSHOOT,
-    CUSTOM_SAVE,
-    CUSTOM_BACK,
-    
-    // PID profile submenu
-    PID_PROFILE,
-    PID_SOFT,
-    PID_NORMAL,
-    PID_STRONG,
-    
-    // Sound submenu
-    SOUND,
-    SOUND_ON,
-    SOUND_OFF,
-    
-    BACK
-};
-
-enum class MenuItemType {
-    SUBMENU,      // Leads to another menu
-    ACTION,       // Executes an action (start, pause, save)
-    VALUE_EDIT,   // Editable value (temp, time)
-    TOGGLE        // On/off selection
-};
-
-struct MenuItem {
-    String label;
-    MenuItemType type;
-    MenuPath path;
-    
-    // For VALUE_EDIT type
-    int currentValue;
-    int minValue;
-    int maxValue;
-    int step;
-    String unit;
-    
-    // For SUBMENU type
-    MenuPath submenuPath;
-};
-
-using MenuSelectionCallback = std::function<void(MenuPath path, int value)>;
+    targetTimeSeconds = (uint32_t)newTargetTime;
+}
 ```
 
-### MenuController Implementation Pattern
+---
+
+## Preset Change During Operation
+
+### Behavior (NEW)
+Previously, preset changes were not allowed during RUNNING or PAUSED states. The current implementation now **allows preset changes during operation** with automatic timer reset.
+
+### Timer Reset Logic
+When preset is changed during RUNNING or PAUSED:
+1. New preset loaded (target temp, target time, max overshoot)
+2. PID constraints updated
+3. Safety monitor limits updated
+4. **Timer reset**:
+  - `startTime = currentMillis`
+  - `totalPausedDuration = 0`
+  - If PAUSED: `pausedTime = currentMillis`
+5. Elapsed time effectively becomes 0
+6. New target time from new preset takes effect
+
+### Use Case
+Allows user to switch filament types mid-dry without stopping and restarting. For example:
+- Started with PLA preset (50°C, 5 hours)
+- After 2 hours, switch to PETG (65°C, 5 hours)
+- Timer resets, will now run for full 5 hours at 65°C
+- No need to stop, reset, and restart
+
+### UI Flow
+```
+User in RUNNING state with PLA preset
+  └─> Navigates to "Select Preset" menu
+      └─> Selects "PETG"
+          └─> MenuSelectionCallback(PRESET_PETG, 0)
+              └─> UIController → Dryer.selectPreset(PresetType::PETG)
+                  ├─> Loads PETG parameters
+                  ├─> Updates PID max temp (65 + 10 = 75°C)
+                  ├─> Resets startTime = currentMillis
+                  ├─> totalPausedDuration = 0
+                  └─> State remains RUNNING
+                      └─> StatsUpdateCallback shows new preset and reset timer
+```
+
+---
+
+## Fan Control Integration
+
+### Purpose
+Optional cooling fan to ensure proper air circulation during heating and cooldown.
+
+### Operating Rules
+- **Starts**: When Dryer transitions to RUNNING
+- **Keeps Running**: When Dryer transitions to PAUSED (for cooling)
+- **Stops**: When Dryer transitions to READY, FINISHED, or FAILED
+- **Emergency**: Stops when SafetyMonitor triggers emergency
+
+### State Transition Behavior
+```
+READY → RUNNING:     Fan starts
+RUNNING → PAUSED:    Fan keeps running (does NOT stop)
+PAUSED → RUNNING:    Fan already running (no action)
+PAUSED → READY:      Fan stops
+RUNNING → FINISHED:  Fan stops
+RUNNING → FAILED:    Fan stops
+Any → FAILED:        Fan stops (emergency)
+```
+
+### Implementation
+Fan control is **optional** - Dryer accepts `nullptr` for fan control pointer and checks before calling methods:
+
 ```cpp
-// userInterface/MenuController.h
-class MenuController : public IMenuController {
-private:
-    MenuPath currentMenu;
-    int currentSelection;
-    bool inEditMode;
-    int editValue;
-    
-    MenuItem editingItem;
-    std::vector<MenuSelectionCallback> callbacks;
-    
-    // Constraints passed from Dryer
-    float minTemp;
-    float maxTemp;
-    uint32_t maxTime;
-    float maxOvershoot;
-    
-    // Current custom preset values (maintained here during editing)
-    struct CustomPresetDraft {
-        float temp;
-        uint32_t time;
-        float overshoot;
-    } customDraft;
-    
+// In Dryer state transitions
+if (fanControl) {
+    fanControl->start();  // or stop()
+}
+
+// Null safety pattern used throughout
+if (fanControl && !fanControl->isRunning()) {
+    fanControl->start();
+}
+```
+
+### Interface
+```cpp
+class IFanControl {
 public:
-    MenuController() : 
-        currentMenu(MenuPath::ROOT),
-        currentSelection(0),
-        inEditMode(false),
-        minTemp(30.0),
-        maxTemp(80.0),
-        maxTime(36000),
-        maxOvershoot(10.0) {}
-    
-    void setConstraints(float min, float max, uint32_t maxT, float maxO) {
-        minTemp = min;
-        maxTemp = max;
-        maxTime = maxT;
-        maxOvershoot = maxO;
-    }
-    
-    void setCustomPresetValues(float temp, uint32_t time, float overshoot) {
-        customDraft.temp = temp;
-        customDraft.time = time;
-        customDraft.overshoot = overshoot;
-    }
-    
-    void handleAction(MenuAction action) override {
-        if (inEditMode) {
-            handleEditMode(action);
-        } else {
-            handleNavigationMode(action);
-        }
-    }
-    
-private:
-    void handleNavigationMode(MenuAction action) {
-        switch (action) {
-            case MenuAction::UP:
-                navigateUp();
-                break;
-                
-            case MenuAction::DOWN:
-                navigateDown();
-                break;
-                
-            case MenuAction::ENTER:
-                selectCurrentItem();
-                break;
-                
-            case MenuAction::BACK:
-                navigateBack();
-                break;
-        }
-    }
-    
-    void handleEditMode(MenuAction action) {
-        switch (action) {
-            case MenuAction::UP:
-                editValue += editingItem.step;
-                editValue = constrain(editValue, editingItem.minValue, editingItem.maxValue);
-                break;
-                
-            case MenuAction::DOWN:
-                editValue -= editingItem.step;
-                editValue = constrain(editValue, editingItem.minValue, editingItem.maxValue);
-                break;
-                
-            case MenuAction::ENTER:
-                // Confirm edit
-                confirmEdit();
-                break;
-                
-            case MenuAction::BACK:
-                // Cancel edit
-                cancelEdit();
-                break;
-        }
-    }
-    
-    void selectCurrentItem() {
-        MenuItem item = getCurrentMenuItem();
-        
-        switch (item.type) {
-            case MenuItemType::SUBMENU:
-                enterSubmenu(item.submenuPath);
-                break;
-                
-            case MenuItemType::ACTION:
-                executeAction(item.path);
-                break;
-                
-            case MenuItemType::VALUE_EDIT:
-                enterEditMode(item);
-                break;
-                
-            case MenuItemType::TOGGLE:
-                executeAction(item.path);
-                break;
-        }
-    }
-    
-    void enterEditMode(MenuItem item) {
-        inEditMode = true;
-        editingItem = item;
-        editValue = item.currentValue;
-    }
-    
-    void confirmEdit() {
-        inEditMode = false;
-        
-        // Update draft values
-        switch (editingItem.path) {
-            case MenuPath::CUSTOM_TEMP:
-                customDraft.temp = editValue;
-                break;
-            case MenuPath::CUSTOM_TIME:
-                customDraft.time = editValue;
-                break;
-            case MenuPath::CUSTOM_OVERSHOOT:
-                customDraft.overshoot = editValue;
-                break;
-        }
-        
-        // Notify callbacks
-        notifyCallbacks(editingItem.path, editValue);
-    }
-    
-    void cancelEdit() {
-        inEditMode = false;
-        // editValue discarded, draft values unchanged
-    }
-    
-    void executeAction(MenuPath path) {
-        // For actions and save, notify with value 0
-        notifyCallbacks(path, 0);
-        
-        // Navigate back after save
-        if (path == MenuPath::CUSTOM_SAVE) {
-            navigateBack();
-        }
-    }
-    
-    MenuItem getCurrentMenuItem() {
-        std::vector<MenuItem> items = getCurrentMenuItems();
-        return items[currentSelection];
-    }
-    
-    std::vector<MenuItem> getCurrentMenuItems() override {
-        switch (currentMenu) {
-            case MenuPath::ROOT:
-                return getRootMenu();
-            case MenuPath::STATUS:
-                return getStatusMenu();
-            case MenuPath::PRESET:
-                return getPresetMenu();
-            case MenuPath::PRESET_CUSTOM:
-                return getCustomPresetMenu();
-            case MenuPath::PID_PROFILE:
-                return getPIDProfileMenu();
-            case MenuPath::SOUND:
-                return getSoundMenu();
-            default:
-                return getRootMenu();
-        }
-    }
-    
-    std::vector<MenuItem> getRootMenu() {
-        return {
-            {"Status", MenuItemType::SUBMENU, MenuPath::STATUS, 0, 0, 0, 0, "", MenuPath::STATUS},
-            {"Preset", MenuItemType::SUBMENU, MenuPath::PRESET, 0, 0, 0, 0, "", MenuPath::PRESET},
-            {"PID Profile", MenuItemType::SUBMENU, MenuPath::PID_PROFILE, 0, 0, 0, 0, "", MenuPath::PID_PROFILE},
-            {"Sound", MenuItemType::SUBMENU, MenuPath::SOUND, 0, 0, 0, 0, "", MenuPath::SOUND}
-        };
-    }
-    
-    std::vector<MenuItem> getCustomPresetMenu() {
-        return {
-            {"Temp", MenuItemType::VALUE_EDIT, MenuPath::CUSTOM_TEMP, 
-             (int)customDraft.temp, (int)minTemp, (int)maxTemp, 1, "°C"},
-            {"Time", MenuItemType::VALUE_EDIT, MenuPath::CUSTOM_TIME, 
-             (int)(customDraft.time / 60), 0, (int)(maxTime / 60), 10, "min"},
-            {"Max Overshoot", MenuItemType::VALUE_EDIT, MenuPath::CUSTOM_OVERSHOOT, 
-             (int)customDraft.overshoot, 0, (int)maxOvershoot, 1, "°C"},
-            {"Save", MenuItemType::ACTION, MenuPath::CUSTOM_SAVE},
-            {"Back", MenuItemType::ACTION, MenuPath::BACK}
-        };
-    }
-    
-    void notifyCallbacks(MenuPath path, int value) {
-        for (auto& callback : callbacks) {
-            if (callback) {
-                callback(path, value);
-            }
-        }
-    }
-    
-public:
-    void registerSelectionCallback(MenuSelectionCallback callback) override {
-        callbacks.push_back(callback);
-    }
-    
-    bool isInEditMode() const {
-        return inEditMode;
-    }
-    
-    MenuItem getEditingItem() const {
-        return editingItem;
-    }
-    
-    int getEditValue() const {
-        return editValue;
-    }
+    virtual void start() = 0;
+    virtual void stop() = 0;
+    virtual bool isRunning() const = 0;
+    virtual ~IFanControl() = default;
 };
 ```
 
-### UIController Integration with MenuController
+Simple relay control (ON/OFF), no PWM or speed control.
+
+---
+
+## Dirty Flag Optimization (UIController)
+
+### Problem
+Updating the display on every loop iteration is wasteful and can cause flicker, especially when values haven't changed.
+
+### Solution
+UIController maintains a `displayNeedsUpdate` flag that is set `true` only when:
+1. Button press occurs
+2. Menu navigation happens
+3. Displayed values actually change (HOME mode only)
+
+### Implementation Pattern
 ```cpp
-// userInterface/UIController.h
 class UIController {
 private:
-    IMenuController* menuController;
-    IDisplay* display;
-    ISoundController* soundController;
-    ButtonManager* buttonManager;
-    Dryer* dryer;
+    bool displayNeedsUpdate;
+    
+    // Cached values for change detection
+    struct CachedDisplayValues {
+        float boxTemp;
+        float heaterTemp;
+        float boxHumidity;
+        uint32_t remainingTime;
+        DryerState state;
+        PresetType preset;
+        
+        bool operator!=(const CachedDisplayValues& other) const {
+            // Return true if any significant change detected
+        }
+    };
+    CachedDisplayValues cachedValues;
     
 public:
-    void setup() {
-        // Pass constraints from Dryer to MenuController
-        menuController->setConstraints(
-            dryer->getMinTemp(),
-            dryer->getMaxTemp(),
-            dryer->getMaxTime(),
-            dryer->getMaxOvershoot()
-        );
+    void update(uint32_t currentMillis) {
+        // Store time for callback consistency
+        currentTime = currentMillis;
         
-        // Initialize menu with current custom preset values
-        CustomPreset preset = dryer->getCustomPreset();
-        menuController->setCustomPresetValues(
-            preset.targetTemp,
-            preset.targetTime,
-            preset.maxOvershoot
-        );
+        // Update buttons (high priority)
+        buttonManager->update(currentMillis);
         
-        // Register button callbacks
-        setupButtonCallbacks();
+        // Check menu timeout
+        checkMenuTimeout(currentMillis);
         
-        // Register menu selection callback
-        menuController->registerSelectionCallback(
-            [this](MenuPath path, int value) {
-                handleMenuSelection(path, value);
+        // Only render if dirty
+        if (displayNeedsUpdate) {
+            if (currentMode == UIMode::HOME) {
+                renderHomeScreen();
+            } else {
+                renderMenuScreen();
             }
-        );
-        
-        // Register dryer stats callback for display updates
-        dryer->registerStatsUpdateCallback(
-            [this](const CurrentStats& stats) {
-                updateDisplay(stats);
-            }
-        );
-    }
-    
-    void setupButtonCallbacks() {
-        buttonManager->registerButtonCallback(ButtonType::SET,
-            [this](ButtonEvent event) {
-                if (event == ButtonEvent::SINGLE_CLICK) {
-                    menuController->handleAction(MenuAction::ENTER);
-                    soundController->playClick();
-                } else if (event == ButtonEvent::LONG_PRESS) {
-                    menuController->handleAction(MenuAction::BACK);
-                    soundController->playClick();
-                }
-            }
-        );
-        
-        buttonManager->registerButtonCallback(ButtonType::UP,
-            [this](ButtonEvent event) {
-                if (event == ButtonEvent::SINGLE_CLICK) {
-                    menuController->handleAction(MenuAction::UP);
-                    soundController->playClick();
-                }
-            }
-        );
-        
-        buttonManager->registerButtonCallback(ButtonType::DOWN,
-            [this](ButtonEvent event) {
-                if (event == ButtonEvent::SINGLE_CLICK) {
-                    menuController->handleAction(MenuAction::DOWN);
-                    soundController->playClick();
-                }
-            }
-        );
-    }
-    
-    void handleMenuSelection(MenuPath path, int value) {
-        switch (path) {
-            case MenuPath::STATUS_START:
-                dryer->start();
-                soundController->playStart();
-                break;
-                
-            case MenuPath::STATUS_PAUSE:
-                dryer->pause();
-                break;
-                
-            case MenuPath::STATUS_RESET:
-                dryer->reset();
-                break;
-                
-            case MenuPath::PRESET_PLA:
-                dryer->selectPreset(PresetType::PLA);
-                soundController->playConfirm();
-                break;
-                
-            case MenuPath::PRESET_PETG:
-                dryer->selectPreset(PresetType::PETG);
-                soundController->playConfirm();
-                break;
-                
-            case MenuPath::PRESET_CUSTOM:
-                dryer->selectPreset(PresetType::CUSTOM);
-                soundController->playConfirm();
-                break;
-                
-            case MenuPath::CUSTOM_TEMP:
-                dryer->setCustomPresetTemp(value);
-                break;
-                
-            case MenuPath::CUSTOM_TIME:
-                dryer->setCustomPresetTime(value * 60);  // Convert minutes to seconds
-                break;
-                
-            case MenuPath::CUSTOM_OVERSHOOT:
-                dryer->setCustomPresetOvershoot(value);
-                break;
-                
-            case MenuPath::CUSTOM_SAVE:
-                dryer->saveCustomPreset();
-                soundController->playConfirm();
-                break;
-                
-            case MenuPath::PID_SOFT:
-                dryer->setPIDProfile(PIDProfile::SOFT);
-                soundController->playConfirm();
-                break;
-                
-            case MenuPath::PID_NORMAL:
-                dryer->setPIDProfile(PIDProfile::NORMAL);
-                soundController->playConfirm();
-                break;
-                
-            case MenuPath::PID_STRONG:
-                dryer->setPIDProfile(PIDProfile::STRONG);
-                soundController->playConfirm();
-                break;
-                
-            case MenuPath::SOUND_ON:
-                soundController->setEnabled(true);
-                dryer->setSoundEnabled(true);
-                soundController->playConfirm();
-                break;
-                
-            case MenuPath::SOUND_OFF:
-                dryer->setSoundEnabled(false);
-                soundController->setEnabled(false);
-                break;
-                
-            default:
-                break;
-        }
-    }
-    
-    void updateDisplay(const CurrentStats& stats) {
-        if (menuController->isInEditMode()) {
-            // Show edit screen
-            MenuItem item = menuController->getEditingItem();
-            int value = menuController->getEditValue();
-            display->showEditScreen(item.label, value, item.unit);
-        } else {
-            // Show menu or status screen
-            std::vector<MenuItem> items = menuController->getCurrentMenuItems();
-            display->showMenu(items, stats);
+            displayNeedsUpdate = false;  // Clear flag
         }
     }
 };
 ```
 
+### When Flag is Set
+**In HOME mode**:
+- Stats callback from Dryer detects value change (temperature, time, state, preset)
+- User presses button (cycles stats screens)
+- User enters menu
+
+**In MENU mode**:
+- Any button press (navigation, edit)
+- Menu state changes
+- User exits menu
+
+### Benefits
+- Reduces SPI/I2C traffic to display
+- Prevents flicker from redundant updates
+- Lower power consumption
+- Faster loop execution when display unchanged
+
 ---
 
-## Complete Data Flow: Custom Preset Editing Example
+## Current Time Storage Pattern (UIController)
 
+### Problem
+Callbacks may fire at different times during the update cycle, leading to timing inconsistencies when using `millis()` directly.
+
+### Solution
+UIController stores `currentMillis` at the start of `update()` and uses this stored value in all callbacks and logic during that update cycle.
+
+### Implementation
+```cpp
+class UIController {
+private:
+    uint32_t currentTime;  // Stored at start of update()
+    
+public:
+    void update(uint32_t currentMillis) {
+        // Store time for consistency
+        currentTime = currentMillis;
+        
+        // Now all callbacks during this update use the same time
+        buttonManager->update(currentMillis);
+        
+        // Button callbacks use currentTime, not millis()
+        // Menu timeout check uses currentTime
+        // All timing logic consistent within this update cycle
+    }
+};
 ```
-1. User navigates to "Preset" menu
-   └─> UIController passes UP/DOWN to MenuController
-       └─> MenuController updates currentSelection
-           └─> Display shows menu with "PLA", "PETG", "Custom" highlighted
 
-2. User selects "Custom" (presses SET)
-   └─> MenuController enters PRESET_CUSTOM submenu
-       └─> Display shows: "Temp", "Time", "Max Overshoot", "Save", "Back"
+### Benefits
+- Deterministic timing within an update cycle
+- No race conditions from time advancing mid-update
+- Easier to test with fixed time injection
+- Consistent behavior across callbacks
 
-3. User navigates to "Temp" and presses SET
-   └─> MenuController.enterEditMode()
-       └─> inEditMode = true
-       └─> editValue = customDraft.temp (e.g., 50)
-       └─> Display shows: "Temp: 50°C" (blinking cursor)
+---
 
-4. User presses UP three times
-   └─> Each press: editValue += 1 (step)
-       └─> editValue: 50 → 51 → 52 → 53
-       └─> Display updates in real-time: "Temp: 53°C"
-       └─> Values clamped by minTemp/maxTemp
+## Critical Reminders
 
-5. User presses SET to confirm
-   └─> MenuController.confirmEdit()
-       ├─> customDraft.temp = 53
-       ├─> notifyCallbacks(CUSTOM_TEMP, 53)
-       │   └─> UIController.handleMenuSelection(CUSTOM_TEMP, 53)
-       │       └─> Dryer.setCustomPresetTemp(53)
-       │           └─> Dryer updates internal customPreset.targetTemp
-       └─> inEditMode = false
-       └─> Display returns to menu: "Temp", "Time", ...
+### HeaterControl
+- **Must call `update(currentMillis)` frequently** (< 100ms) from main loop
+- Software PWM timing depends on loop consistency
+- Pin state changes only when necessary for efficiency
+- Period configured via `HEATER_PWM_PERIOD_MS` in Config.h
 
-6. User edits "Time" and "Max Overshoot" similarly
-   └─> Each edit updates customDraft and notifies Dryer
+### PIDController
+- Output is capped to `PWM_MAX_PID_OUTPUT`, not `PWM_MAX`
+- This is the primary safety limit to prevent overshoot from thermal momentum
+- Temperature-aware slowdown is the primary overshoot prevention mechanism
+- Predictive cooling prevents undershoot during temperature drop
+- Always use Config.h constants, never hardcode tuning values
 
-7. User navigates to "Save" and presses SET
-   └─> MenuController.executeAction(CUSTOM_SAVE)
-       └─> notifyCallbacks(CUSTOM_SAVE, 0)
-           └─> UIController.handleMenuSelection(CUSTOM_SAVE, 0)
-               └─> Dryer.saveCustomPreset()
-                   └─> SettingsStorage.saveCustomPreset(customPreset)
-                       └─> Writes to /settings.json:
-                           {
-                             "customPreset": {
-                               "targetTemp": 53,
-                               "targetTime": 14400,
-                               "maxOvershoot": 8
-                             }
-                           }
-       └─> MenuController navigates back to Preset menu
-       └─> SoundController plays confirmation tone
+### Configuration
+- **All timing, limits, and tuning values in Config.h**
+- Specification references constants by name only
+- Single source of truth for all operational parameters
+- Never replicate values in code or documentation
 
-8. Next boot
-   └─> SettingsStorage.loadSettings()
-       └─> Dryer loads customPreset values
-       └─> MenuController initialized with these values
-       └─> User sees saved settings when editing again
-```
+### Safety
+- Defense in depth: multiple layers (PID output limit, temp slowdown, safety monitor, hardware switch)
+- Fan keeps running when paused for cooling
+- Emergency stops both heater and fan immediately
+- State persistence allows recovery from power loss
+
+### Testing
+- All components have corresponding test files
+- Mocks for all hardware dependencies
+- Time injection for deterministic tests
+- Integration tests verify component interactions
+
+---
+
+## Summary
+
+This architecture provides:
+- **Testability**: Interface-based design with dependency injection and time injection
+- **Safety**: Multiple layers of protection with defense in depth
+- **Flexibility**: Callback-based communication enables loose coupling
+- **Maintainability**: Clear component responsibilities and single source of truth for configuration
+- **Recoverability**: State persistence enables recovery from power loss
+- **User Experience**: Dirty flag optimization, timer adjustment, preset change during operation
+- **Predictability**: Predictive cooling compensation prevents temperature undershoot
+
+All timing constants, safety limits, and tuning parameters are centralized in `Config.h` and referenced by name throughout the codebase to maintain a single source of truth.
