@@ -15,13 +15,17 @@ private:
     String lastError;
     bool initialized;
     uint32_t readCallCount;
+    uint32_t requestConversionCallCount;
+    bool conversionReady;
 
 public:
     MockHeaterTempSensor()
         : temperature(25.0),
           valid(true),
           initialized(false),
-          readCallCount(0) {
+          readCallCount(0),
+          requestConversionCallCount(0),
+          conversionReady(true) {
     }
 
     void begin() override {
@@ -31,6 +35,15 @@ public:
     bool read() override {
         readCallCount++;
         return valid;
+    }
+
+    void requestConversion() override {
+        requestConversionCallCount++;
+        conversionReady = true;  // Immediately ready in mock
+    }
+
+    bool isConversionReady() override {
+        return conversionReady;
     }
 
     float getTemperature() const override {
@@ -71,8 +84,17 @@ public:
         return readCallCount;
     }
 
+    uint32_t getRequestConversionCallCount() const {
+        return requestConversionCallCount;
+    }
+
     void resetCallCount() {
         readCallCount = 0;
+        requestConversionCallCount = 0;
+    }
+
+    void setConversionReady(bool ready) {
+        conversionReady = ready;
     }
 };
 

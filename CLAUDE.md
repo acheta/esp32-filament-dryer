@@ -22,11 +22,17 @@ pio run -e esp32-s3-n8r2 -t upload
 
 ### Testing
 ```bash
-# Run all unit tests (native environment)
-pio test -e native
+# Run all unit tests (Windows)
+pio test -e native -v -f test_dryer_integration -f test_pid_controller -f test_safety_monitor -f test_sensor_integration -f test_display -f test_heater_control -f test_fan_control -f test_settings_storage
 
-# Run specific test
+# Run all unit tests (Linux/Unix container)
+pio test -e native-linux -v -f test_dryer_integration -f test_pid_controller -f test_safety_monitor -f test_sensor_integration -f test_display -f test_heater_control -f test_fan_control -f test_settings_storage
+
+# Run specific test (Windows)
 pio test -e native -f test_pid_controller
+
+# Run specific test (Linux/Unix container)
+pio test -e native-linux -f test_pid_controller
 ```
 
 ### Monitoring

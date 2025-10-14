@@ -5,6 +5,7 @@
     #include <Arduino.h>
 #endif
 
+#include "../TestConfig.h"  // Test-specific configuration (decoupled from production Config.h)
 #include "../../src/Dryer.h"
 #include "../mocks/MockSensorManager.h"
 #include "../mocks/MockHeaterControl.h"
@@ -316,7 +317,7 @@ void test_dryer_provides_current_stats() {
 
     TEST_ASSERT_EQUAL(DryerState::RUNNING, stats.state);
     TEST_ASSERT_EQUAL_FLOAT(65.5, stats.currentTemp);
-    TEST_ASSERT_EQUAL_FLOAT(50.0, stats.targetTemp); // PLA preset
+    TEST_ASSERT_EQUAL_FLOAT(TEST_PRESET_PLA_TEMP, stats.targetTemp); // PLA preset from TestConfig
     TEST_ASSERT_EQUAL_FLOAT(48.2, stats.boxTemp);
     TEST_ASSERT_EQUAL_FLOAT(35.0, stats.boxHumidity);
     TEST_ASSERT_EQUAL(PresetType::PLA, stats.activePreset);
@@ -372,7 +373,7 @@ void test_dryer_selects_pla_preset() {
     TEST_ASSERT_EQUAL(PresetType::PLA, dryer->getActivePreset());
 
     CurrentStats stats = dryer->getCurrentStats();
-    TEST_ASSERT_EQUAL_FLOAT(50.0, stats.targetTemp);
+    TEST_ASSERT_EQUAL_FLOAT(TEST_PRESET_PLA_TEMP, stats.targetTemp);
 }
 
 void test_dryer_selects_petg_preset() {
@@ -803,13 +804,13 @@ void test_dryer_updates_target_temp_and_time_on_preset_change() {
     dryer->start();
 
     CurrentStats stats1 = dryer->getCurrentStats();
-    TEST_ASSERT_EQUAL_FLOAT(51.0, stats1.targetTemp);  // PLA temp
+    TEST_ASSERT_EQUAL_FLOAT(TEST_PRESET_PLA_TEMP, stats1.targetTemp);  // PLA temp from TestConfig
 
     // Change to PETG
     dryer->selectPreset(PresetType::PETG);
 
     CurrentStats stats2 = dryer->getCurrentStats();
-    TEST_ASSERT_EQUAL_FLOAT(65.0, stats2.targetTemp);  // PETG temp
+    TEST_ASSERT_EQUAL_FLOAT(TEST_PRESET_PETG_TEMP, stats2.targetTemp);  // PETG temp from TestConfig
 }
 
 // ==================== Timer Adjustment Tests ====================

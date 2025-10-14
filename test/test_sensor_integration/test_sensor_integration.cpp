@@ -55,20 +55,20 @@ void test_sensor_manager_reads_heater_temp_at_500ms_interval() {
     // Reset call count after begin
     heaterSensor->resetCallCount();
 
-    // First update at 0ms - should not read yet
+    // First update at 0ms - completes the conversion requested in begin()
     sensorManager->update(0);
-    TEST_ASSERT_EQUAL(0, heaterSensor->getReadCallCount());
-
-    // Update at 500ms - should read
-    sensorManager->update(500);
     TEST_ASSERT_EQUAL(1, heaterSensor->getReadCallCount());
 
-    // Update at 999ms - should not read
+    // Update at 999ms - should not read again (interval is 1000ms)
     sensorManager->update(999);
     TEST_ASSERT_EQUAL(1, heaterSensor->getReadCallCount());
 
-    // Update at 1000ms - should read again
+    // Update at 1000ms - requests new conversion
     sensorManager->update(1000);
+    TEST_ASSERT_EQUAL(1, heaterSensor->getReadCallCount());
+
+    // Update at 1001ms - completes the conversion requested at 1000ms
+    sensorManager->update(1001);
     TEST_ASSERT_EQUAL(2, heaterSensor->getReadCallCount());
 }
 
@@ -229,19 +229,24 @@ void test_sensor_manager_coordinates_different_update_rates() {
     heaterSensor->resetCallCount();
     boxSensor->resetCallCount();
 
-    // At 500ms - heater reads, box doesn't
-    sensorManager->update(500);
+    // At 0ms - completes heater conversion from begin(), box doesn't read
+    sensorManager->update(0);
     TEST_ASSERT_EQUAL(1, heaterSensor->getReadCallCount());
     TEST_ASSERT_EQUAL(0, boxSensor->getReadCallCount());
 
-    // At 1000ms - heater reads again, box doesn't
+    // At 1000ms - requests new heater conversion, box doesn't read
     sensorManager->update(1000);
+    TEST_ASSERT_EQUAL(1, heaterSensor->getReadCallCount());
+    TEST_ASSERT_EQUAL(0, boxSensor->getReadCallCount());
+
+    // At 1001ms - completes heater conversion, box doesn't read
+    sensorManager->update(1001);
     TEST_ASSERT_EQUAL(2, heaterSensor->getReadCallCount());
     TEST_ASSERT_EQUAL(0, boxSensor->getReadCallCount());
 
-    // At 2000ms - both read
+    // At 2000ms - heater not due yet, box reads
     sensorManager->update(2000);
-    TEST_ASSERT_EQUAL(3, heaterSensor->getReadCallCount());
+    TEST_ASSERT_EQUAL(2, heaterSensor->getReadCallCount());
     TEST_ASSERT_EQUAL(1, boxSensor->getReadCallCount());
 }
 
@@ -300,10 +305,14 @@ void test_sensor_manager_full_integration_with_both_sensors() {
         sensorManager->update(t);
     }
 
-    // Heater updates every 500ms: 0, 500, 1000, 1500, 2000, 2500, 3000 = 7 times
-    // Box updates every 2000ms: 0, 2000 = 2 times
-    TEST_ASSERT_EQUAL(6, heaterUpdates);  // First update at 500ms
-    TEST_ASSERT_EQUAL(1, boxUpdates);     // First update at 2000ms
+    // With async pattern and 1000ms heater interval:
+    // t=0: completes conversion from begin() (heaterUpdates=1)
+    // t=1000-1100: requests+completes new conversion (heaterUpdates=2)
+    // t=2000: box reads (boxUpdates=1), heater requests conversion
+    // t=2100: completes conversion (heaterUpdates=3)
+    // t=3000: requests conversion (not completed in loop)
+    TEST_ASSERT_EQUAL(3, heaterUpdates);
+    TEST_ASSERT_EQUAL(1, boxUpdates);
     TEST_ASSERT_EQUAL(0, errors);
 
     // Verify final cached values

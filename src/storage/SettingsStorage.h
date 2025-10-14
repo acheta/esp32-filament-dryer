@@ -10,6 +10,7 @@
     #include <ArduinoJson.h>
 #else
     #include "../../test/mocks/arduino_mock.h"
+    // MockFileSystem.h and MockArduinoJson.h are included via arduino_mock.h
 #endif
 
 /**
@@ -57,17 +58,19 @@ private:
      * Formats if mount fails
      */
     bool initializeFilesystem() {
-#ifdef UNIT_TEST
-        return true;
-#else
+#ifndef UNIT_TEST
         Serial.println("Initializing LittleFS...");
+#endif
 
         if (!LittleFS.begin(true)) {  // true = format on fail
             lastError = "LittleFS mount failed";
+#ifndef UNIT_TEST
             Serial.println("  ✗ LittleFS mount failed");
+#endif
             return false;
         }
 
+#ifndef UNIT_TEST
         Serial.println("  ✓ LittleFS mounted successfully");
 
         // Check filesystem health
@@ -79,9 +82,9 @@ private:
         Serial.print(" / ");
         Serial.print(totalBytes);
         Serial.println(" bytes used");
+#endif
 
         return true;
-#endif
     }
 
     /**
@@ -89,9 +92,6 @@ private:
      * Returns true if file exists and can be parsed
      */
     bool verifyJsonFile(const char* path) {
-#ifdef UNIT_TEST
-        return true;
-#else
         if (!LittleFS.exists(path)) {
             return false;
         }
@@ -106,7 +106,6 @@ private:
         file.close();
 
         return (error == DeserializationError::Ok);
-#endif
     }
 
     /**
@@ -114,10 +113,9 @@ private:
      * Nuclear option for corruption recovery
      */
     void formatAndRecreate() {
-#ifdef UNIT_TEST
-        return;
-#else
+#ifndef UNIT_TEST
         Serial.println("Formatting LittleFS...");
+#endif
 
         LittleFS.format();
 
@@ -127,7 +125,9 @@ private:
             return;
         }
 
+#ifndef UNIT_TEST
         Serial.println("  ✓ Filesystem formatted");
+#endif
 
         // Create fresh settings with defaults
         saveSettingsInternal();
@@ -136,22 +136,24 @@ private:
         if (!verifyJsonFile(SETTINGS_FILE)) {
             lastError = "Settings file unreadable after creation";
             storageHealthy = false;
+#ifndef UNIT_TEST
             Serial.println("  ✗ CRITICAL: Cannot create valid settings file");
-        } else {
-            Serial.println("  ✓ Settings file created and verified");
-        }
 #endif
+        } else {
+#ifndef UNIT_TEST
+            Serial.println("  ✓ Settings file created and verified");
+#endif
+        }
     }
 
     /**
      * Load settings from JSON file
      */
     bool loadSettingsInternal() {
-#ifdef UNIT_TEST
-        return true;
-#else
         if (!LittleFS.exists(SETTINGS_FILE)) {
+#ifndef UNIT_TEST
             Serial.println("Settings file not found - using defaults");
+#endif
             return false;
         }
 
@@ -166,15 +168,18 @@ private:
         file.close();
 
         if (error) {
-            lastError = "Settings JSON parse error: " + String(error.c_str());
-            Serial.println("  ✗ " + lastError);
+            lastError = String("Settings JSON parse error: ") + String(error.c_str());
+#ifndef UNIT_TEST
+            Serial.print("  ✗ ");
+            Serial.println(lastError);
+#endif
             return false;
         }
 
         // Version check (for future migrations)
         uint8_t version = doc["version"] | 0;
         if (version == 0 || version > SETTINGS_VERSION) {
-            lastError = "Unknown settings version: " + String(version);
+            lastError = String("Unknown settings version: ") + String(version);
             return false;
         }
 
@@ -203,18 +208,16 @@ private:
         // Load sound setting
         soundEnabled = doc["soundEnabled"] | true;
 
+#ifndef UNIT_TEST
         Serial.println("  ✓ Settings loaded");
-        return true;
 #endif
+        return true;
     }
 
     /**
      * Save settings to JSON file
      */
     bool saveSettingsInternal() {
-#ifdef UNIT_TEST
-        return true;
-#else
         JsonDocument doc;
 
         doc["version"] = SETTINGS_VERSION;
@@ -246,7 +249,10 @@ private:
         File file = LittleFS.open(SETTINGS_FILE, "w");
         if (!file) {
             lastError = "Cannot open settings file for writing";
-            Serial.println("  ✗ " + lastError);
+#ifndef UNIT_TEST
+            Serial.print("  ✗ ");
+            Serial.println(lastError);
+#endif
             return false;
         }
 
@@ -259,7 +265,6 @@ private:
         }
 
         return true;
-#endif
     }
 
     /**
@@ -267,9 +272,6 @@ private:
      * No timestamp checking - just verify state was RUNNING
      */
     bool loadRuntimeInternal() {
-#ifdef UNIT_TEST
-        return false;
-#else
         if (!LittleFS.exists(RUNTIME_FILE)) {
             hasValidRuntime = false;
             return false;
@@ -286,7 +288,7 @@ private:
         file.close();
 
         if (error) {
-            lastError = "Runtime JSON parse error: " + String(error.c_str());
+            lastError = String("Runtime JSON parse error: ") + String(error.c_str());
             hasValidRuntime = false;
             return false;
         }
@@ -318,14 +320,17 @@ private:
 
         runtimeTimestamp = doc["timestamp"] | 0;
 
+#ifndef UNIT_TEST
         // Log the timestamp for informational purposes
         Serial.print("  Runtime saved at timestamp: ");
         Serial.println(runtimeTimestamp);
 
         hasValidRuntime = true;
         Serial.println("  ✓ Valid runtime state found (RUNNING)");
-        return true;
+#else
+        hasValidRuntime = true;
 #endif
+        return true;
     }
 
     /**
@@ -334,9 +339,6 @@ private:
     bool saveRuntimeInternal(DryerState state, uint32_t elapsed,
                             float targetTemp, uint32_t targetTime,
                             PresetType preset, uint32_t timestamp) {
-#ifdef UNIT_TEST
-        return true;
-#else
         JsonDocument doc;
 
         doc["version"] = RUNTIME_VERSION;
@@ -373,7 +375,6 @@ private:
         file.close();
 
         return (bytesWritten > 0);
-#endif
     }
 
 public:
@@ -398,17 +399,21 @@ public:
     }
 
     void begin() override {
+#ifndef UNIT_TEST
         Serial.println("\n========================================");
         Serial.println("Initializing SettingsStorage");
         Serial.println("========================================");
+#endif
 
         // Initialize filesystem
         if (!initializeFilesystem()) {
             storageHealthy = false;
             initialized = true;
+#ifndef UNIT_TEST
             Serial.println("✗ Storage initialization failed");
             Serial.println("  System will continue with defaults");
             Serial.println("========================================\n");
+#endif
             return;
         }
 
@@ -448,13 +453,16 @@ public:
 
         initialized = true;
 
+#ifndef UNIT_TEST
         if (storageHealthy) {
             Serial.println("✓ Storage initialized successfully");
         } else {
             Serial.println("⚠ Storage initialized with errors");
-            Serial.println("  Last error: " + lastError);
+            Serial.print("  Last error: ");
+            Serial.println(lastError);
         }
         Serial.println("========================================\n");
+#endif
     }
 
     void loadSettings() override {
@@ -470,7 +478,9 @@ public:
         }
 
         if (!saveSettingsInternal()) {
+#ifndef UNIT_TEST
             Serial.println("⚠ Failed to save settings (system will continue)");
+#endif
         }
     }
 
@@ -525,6 +535,10 @@ public:
         runtimePreset = preset;
         runtimeTimestamp = timestamp;
 
+        // Mark as valid in memory (cached)
+        // Note: On restart, only RUNNING state will be loaded from file
+        hasValidRuntime = true;
+
         // Save to file (don't fail if write fails - graceful degradation)
         saveRuntimeInternal(state, elapsed, targetTemp, targetTime, preset, timestamp);
     }
@@ -541,11 +555,9 @@ public:
     void clearRuntimeState() override {
         hasValidRuntime = false;
 
-#ifndef UNIT_TEST
         if (initialized && LittleFS.exists(RUNTIME_FILE)) {
             LittleFS.remove(RUNTIME_FILE);
         }
-#endif
     }
 
     void saveEmergencyState(const String& reason) override {

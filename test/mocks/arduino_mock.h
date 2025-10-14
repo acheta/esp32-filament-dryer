@@ -41,15 +41,35 @@ public:
     }
 };
 
-// MockSerial - same as before
+// MockSerial - enhanced with all necessary overloads
 class MockSerial {
 public:
     void begin(unsigned long baud) { printf("Serial initialized at %lu baud\n", baud); }
+
+    // print overloads
     void print(const char* str) { printf("%s", str); }
+    void print(const String& str) { printf("%s", str.c_str()); }
+    void print(int value) { printf("%d", value); }
+    void print(unsigned int value) { printf("%u", value); }
+    void print(long value) { printf("%ld", value); }
+    void print(unsigned long value) { printf("%lu", value); }
     void print(float value, int decimals = 2) { printf("%.*f", decimals, value); }
+    void print(double value, int decimals = 2) { printf("%.*f", decimals, value); }
+
+    // println overloads
     void println(const char* str) { printf("%s\n", str); }
+    void println(const String& str) { printf("%s\n", str.c_str()); }
+    void println(int value) { printf("%d\n", value); }
+    void println(unsigned int value) { printf("%u\n", value); }
+    void println(long value) { printf("%ld\n", value); }
+    void println(unsigned long value) { printf("%lu\n", value); }
     void println(float value, int decimals = 2) { printf("%.*f\n", decimals, value); }
+    void println(double value, int decimals = 2) { printf("%.*f\n", decimals, value); }
     void println() { printf("\n"); }
+
+    // available/read for serial input (stub implementations)
+    int available() { return 0; }
+    int read() { return -1; }
 };
 
 static MockSerial Serial;  // Changed to static
@@ -87,6 +107,10 @@ inline long map(long x, long in_min, long in_max, long out_min, long out_max) {
 }
 
 #define F(string_literal) (string_literal)
+
+// Include filesystem and JSON mocks after String class is defined
+#include "MockFileSystem.h"
+#include "MockArduinoJson.h"
 
 #endif // ARDUINO_MOCK
 #endif // UNIT_TEST

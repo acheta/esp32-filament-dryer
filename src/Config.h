@@ -160,25 +160,52 @@ constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;    // Start scaling within margi
 
 // ==================== Preset Configurations ====================
 
-// PLA preset
-constexpr float PRESET_PLA_TEMP = 51.0;
-constexpr uint32_t PRESET_PLA_TIME = 5*60*60; // 5 hours
-constexpr float PRESET_PLA_OVERSHOOT = 19.0;
+#ifdef UNIT_TEST
+    // Use test-specific values to decouple tests from production config changes
+    #include "../test/TestConfig.h"
 
-// PETG preset
-constexpr float PRESET_PETG_TEMP = 65.0;
-constexpr uint32_t PRESET_PETG_TIME = 5*60*60; // 5 hours
-constexpr float PRESET_PETG_OVERSHOOT = 10.0;
+    // PLA preset
+    constexpr float PRESET_PLA_TEMP = TEST_PRESET_PLA_TEMP;
+    constexpr uint32_t PRESET_PLA_TIME = TEST_PRESET_PLA_TIME;
+    constexpr float PRESET_PLA_OVERSHOOT = TEST_PRESET_PLA_OVERSHOOT;
 
-// ABS preset
-constexpr float PRESET_ABS_TEMP = 75.0;
-constexpr uint32_t PRESET_ABS_TIME = 5*60*60; // 5 hours
-constexpr float PRESET_ABS_OVERSHOOT = 10.0;
+    // PETG preset
+    constexpr float PRESET_PETG_TEMP = TEST_PRESET_PETG_TEMP;
+    constexpr uint32_t PRESET_PETG_TIME = TEST_PRESET_PETG_TIME;
+    constexpr float PRESET_PETG_OVERSHOOT = TEST_PRESET_PETG_OVERSHOOT;
 
-// Default custom preset
-constexpr float PRESET_CUSTOM_TEMP = 50.0;
-constexpr uint32_t PRESET_CUSTOM_TIME = 5*60*60; // 5 hours
-constexpr float PRESET_CUSTOM_OVERSHOOT = 10.0;
+    // Default custom preset
+    constexpr float PRESET_CUSTOM_TEMP = TEST_PRESET_CUSTOM_TEMP;
+    constexpr uint32_t PRESET_CUSTOM_TIME = TEST_PRESET_CUSTOM_TIME;
+    constexpr float PRESET_CUSTOM_OVERSHOOT = TEST_PRESET_CUSTOM_OVERSHOOT;
+
+    // ABS preset (not used in tests, but defined for completeness)
+    constexpr float PRESET_ABS_TEMP = 75.0;
+    constexpr uint32_t PRESET_ABS_TIME = 18000;
+    constexpr float PRESET_ABS_OVERSHOOT = 10.0;
+#else
+    // Production values
+
+    // PLA preset
+    constexpr float PRESET_PLA_TEMP = 51.0;
+    constexpr uint32_t PRESET_PLA_TIME = 5*60*60; // 5 hours
+    constexpr float PRESET_PLA_OVERSHOOT = 19.0;
+
+    // PETG preset
+    constexpr float PRESET_PETG_TEMP = 65.0;
+    constexpr uint32_t PRESET_PETG_TIME = 5*60*60; // 5 hours
+    constexpr float PRESET_PETG_OVERSHOOT = 10.0;
+
+    // ABS preset
+    constexpr float PRESET_ABS_TEMP = 75.0;
+    constexpr uint32_t PRESET_ABS_TIME = 5*60*60; // 5 hours
+    constexpr float PRESET_ABS_OVERSHOOT = 10.0;
+
+    // Default custom preset
+    constexpr float PRESET_CUSTOM_TEMP = 50.0;
+    constexpr uint32_t PRESET_CUSTOM_TIME = 5*60*60; // 5 hours
+    constexpr float PRESET_CUSTOM_OVERSHOOT = 10.0;
+#endif
 
 // ==================== Storage Configuration ====================
 
