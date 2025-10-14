@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  node:
+    build: .
+    image: node-dev        # custom image name
+    container_name: nodejs_clion
+    working_dir: /workspace
+    volumes:
+      - .:/workspace        # mount your project folder
+      - /workspace/node_modules  # ensure node_modules belongs to project, not to image
+    tty: true
