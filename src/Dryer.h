@@ -91,7 +91,7 @@ private:
             case DryerState::RUNNING:
                 heaterControl->start(currentMillis);
                 if (fanControl) fanControl->start();
-                if (prevState == DryerState::READY) {
+                if (prevState == DryerState::READY || prevState == DryerState::POWER_RECOVERED) {
                     // Fresh start
                     startTime = currentMillis;
                     totalPausedDuration = 0;
@@ -99,6 +99,9 @@ private:
                     // Resuming from pause
                     totalPausedDuration += (currentMillis - pausedTime);
                 }
+
+                // Save runtime state when entering RUNNING
+                saveRuntimeStateNow(currentMillis);
                 break;
 
             case DryerState::PAUSED:
@@ -108,6 +111,9 @@ private:
                 if (fanControl && !fanControl->isRunning()) {
                     fanControl->start();
                 }
+
+                // Save runtime state when entering PAUSED
+                saveRuntimeStateNow(currentMillis);
                 break;
 
             case DryerState::FINISHED:
@@ -130,10 +136,23 @@ private:
                 break;
 
             case DryerState::POWER_RECOVERED:
+                // CRITICAL: Ensure heater and fan are OFF
                 heaterControl->stop(currentMillis);
                 if (fanControl) fanControl->stop();
                 break;
         }
+    }
+
+    void saveRuntimeStateNow(uint32_t currentMillis) {
+        uint32_t elapsed = getElapsedTime(currentMillis);
+        storage->saveRuntimeState(
+            currentState,
+            elapsed,
+            targetTemp,
+            targetTimeSeconds,
+            activePreset,
+            currentMillis
+        );
     }
 
     void setupCallbacks() {
@@ -321,25 +340,64 @@ public:
 
         if (soundController) {
             soundController->begin();
-            soundController->setEnabled(soundEnabled);
         }
 
         // Setup callbacks
         setupCallbacks();
 
-        // Load settings
-        storage->loadSettings();
-
         // Try to recover from power loss
         if (storage->hasValidRuntimeState()) {
-            // Load runtime state
-            // Transition to POWER_RECOVERED
-            transitionToState(DryerState::POWER_RECOVERED, 0);
+            // Load runtime state from storage
+            DryerState savedState = storage->getRuntimeState();
+
+            // Only recover if state was RUNNING
+            if (savedState == DryerState::RUNNING) {
+                // Restore runtime values
+                PresetType savedPreset = storage->getRuntimePreset();
+                uint32_t savedElapsed = storage->getRuntimeElapsed();
+                float savedTargetTemp = storage->getRuntimeTargetTemp();
+                uint32_t savedTargetTime = storage->getRuntimeTargetTime();
+
+                // Restore preset (this also loads temp/time/overshoot)
+                activePreset = savedPreset;
+                loadPreset(savedPreset);
+
+                // Restore timing (simulated as if we paused at elapsed time)
+                startTime = 0;
+                pausedTime = savedElapsed * 1000;  // Convert seconds to millis
+                totalPausedDuration = 0;
+
+                // Transition to POWER_RECOVERED (ensures heater and fan are OFF)
+                transitionToState(DryerState::POWER_RECOVERED, currentMillis);
+            } else {
+                // State wasn't RUNNING, do normal startup
+                loadSavedSettings();
+            }
         } else {
-            // Normal startup
-            loadPreset(activePreset);
-            setPIDProfile(pidProfile);
+            // Normal startup - load saved settings
+            loadSavedSettings();
         }
+    }
+
+    void loadSavedSettings() {
+        // Load saved preset
+        PresetType savedPreset = storage->loadSelectedPreset();
+        activePreset = savedPreset;
+        loadPreset(savedPreset);
+
+        // Load saved PID profile
+        PIDProfile savedPID = storage->loadPIDProfile();
+        pidProfile = savedPID;
+        setPIDProfile(savedPID);
+
+        // Load saved sound setting
+        soundEnabled = storage->loadSoundEnabled();
+        if (soundController) {
+            soundController->setEnabled(soundEnabled);
+        }
+
+        // Load custom preset
+        customPreset = storage->loadCustomPreset();
     }
 
     void update(uint32_t currentMillis) override {
@@ -407,6 +465,9 @@ public:
         // Load the new preset settings
         loadPreset(preset);
 
+        // Save selected preset immediately
+        storage->saveSelectedPreset(preset);
+
         // If running or paused, reset the timer to start from beginning
         if (currentState == DryerState::RUNNING || currentState == DryerState::PAUSED) {
             startTime = currentTime;
@@ -457,6 +518,9 @@ public:
     void setPIDProfile(PIDProfile profile) override {
         pidProfile = profile;
         pidController->setProfile(profile);
+
+        // Save PID profile immediately
+        storage->savePIDProfile(profile);
     }
 
     PIDProfile getPIDProfile() const override {

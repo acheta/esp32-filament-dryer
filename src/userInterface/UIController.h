@@ -312,7 +312,7 @@ private:
                 if (soundController) soundController->playConfirm();
                 break;
 
-            case MenuPath::ADJUST_TIMER:
+            case MenuPath::ADJUST_TIMER: {
                 uint32_t newRemainingTimeSeconds = value * 60;
                 uint32_t currentRemainingTimeSeconds = lastStats.remainingTime;
                 int32_t deltaSeconds = (int32_t)newRemainingTimeSeconds - (int32_t)currentRemainingTimeSeconds;
@@ -323,7 +323,8 @@ private:
                 menuController->setRemainingTime(lastStats.remainingTime);
 
                 if (soundController) soundController->playConfirm();
-            break;
+                break;
+            }
 
             case MenuPath::PID_SOFT:
                 dryer->setPIDProfile(PIDProfile::SOFT);

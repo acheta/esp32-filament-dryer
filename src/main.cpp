@@ -39,28 +39,10 @@
 
 #include "Dryer.h"
 
-// Mock storage for now (until LittleFS implementation is complete)
 #ifdef UNIT_TEST
     #include "test/mocks/MockSettingsStorage.h"
 #else
-    // Temporary mock for ESP32 until SettingsStorage is implemented
-    class MockSettingsStorage : public ISettingsStorage {
-    public:
-        void begin() override {}
-        void loadSettings() override {}
-        void saveSettings() override {}
-        void saveCustomPreset(const DryingPreset& preset) override {}
-        DryingPreset loadCustomPreset() override { return DryingPreset(); }
-        void saveSoundEnabled(bool enabled) override {}
-        bool loadSoundEnabled() override { return true; }
-        void saveRuntimeState(DryerState state, uint32_t elapsed,
-                             float targetTemp, uint32_t targetTime,
-                             PresetType preset, uint32_t timestamp) override {}
-        bool hasValidRuntimeState() override { return false; }
-        void loadRuntimeState() override {}
-        void clearRuntimeState() override {}
-        void saveEmergencyState(const String& reason) override {}
-    };
+    #include "storage/SettingsStorage.h"
 #endif
 
 // Watchdog configuration
@@ -418,8 +400,13 @@ void setup() {
 
     // ==================== Create Storage & Sound ====================
     Serial.println("\nCreating storage and sound components...");
+#ifdef UNIT_TEST
     settingsStorage = new MockSettingsStorage();
     Serial.println("  - SettingsStorage (mock) created");
+#else
+    settingsStorage = new SettingsStorage();
+    Serial.println("  - SettingsStorage created");
+#endif
 
     soundController = nullptr; // Not implemented yet
     Serial.println("  - Sound controller placeholder set");
@@ -482,6 +469,28 @@ void setup() {
     settingsStorage->begin();
     Serial.println("  ✓ SettingsStorage initialized");
 
+#ifndef UNIT_TEST
+    // Check storage health and display error if needed
+    SettingsStorage* realStorage = static_cast<SettingsStorage*>(settingsStorage);
+    if (realStorage && !realStorage->isHealthy()) {
+        String errorMsg = realStorage->getInitErrorMessage();
+        Serial.println("  ⚠ WARNING: Storage error detected");
+        Serial.println("    Error: " + errorMsg);
+        Serial.println("    System will continue with defaults");
+
+        // Display error on OLED for 5 seconds
+        oledDisplay->clear();
+        oledDisplay->setCursor(0, 0);
+        oledDisplay->setTextSize(1);
+        oledDisplay->println("Storage Error");
+        oledDisplay->println("");
+        oledDisplay->println("System continuing");
+        oledDisplay->println("with defaults");
+        oledDisplay->display();
+        delay(5000);
+    }
+#endif
+
     // FanControl initializes in constructor, no begin() needed
     Serial.println("  ✓ FanControl initialized");
 
@@ -501,32 +510,42 @@ void setup() {
     Serial.println("  ✓ UIController initialized");
 
     // ==================== Show Startup Message ====================
+    DryerState initialState = dryer->getState();
+
     oledDisplay->clear();
     oledDisplay->setCursor(0, 0);
     oledDisplay->setTextSize(1);
-    oledDisplay->println("Dryer Ready");
-    oledDisplay->println("");
-    oledDisplay->println("Starting in");
-    oledDisplay->println("demo mode...");
+
+    if (initialState == DryerState::POWER_RECOVERED) {
+        oledDisplay->println("Power Loss");
+        oledDisplay->println("Detected");
+        oledDisplay->println("");
+        oledDisplay->println("Press SET to");
+        oledDisplay->println("resume cycle");
+
+        Serial.println("\n========================================");
+        Serial.println("POWER RECOVERY MODE");
+        Serial.println("========================================");
+        Serial.println("Previous cycle detected!");
+        Serial.println("Press SET button to resume or use serial commands");
+        Serial.println("========================================\n");
+    } else {
+        oledDisplay->println("Dryer Ready");
+        oledDisplay->println("");
+        oledDisplay->println("Press SET for");
+        oledDisplay->println("menu");
+
+        Serial.println("\n========================================");
+        Serial.println("SYSTEM READY");
+        Serial.println("========================================");
+        Serial.println("Use buttons or serial commands to control");
+        Serial.println("========================================\n");
+    }
+
     oledDisplay->display();
-    delay(2000);
+    delay(3000);
 
-    // ==================== Configure and Start Demo ====================
-    Serial.println("\n========================================");
-    Serial.println("Starting Demo Mode");
-    Serial.println("========================================\n");
-
-    dryer->selectPreset(PresetType::PLA);
-    Serial.println("Preset: PLA (50°C, 4 hours)");
-
-    dryer->setPIDProfile(PIDProfile::STRONG);
-    Serial.println("PID Profile: STRONG");
-
-    dryer->start();
-    Serial.println("State: RUNNING");
-
-    Serial.println("\n✓ System operational!");
-    Serial.println("========================================\n");
+    Serial.println("✓ System operational!");
     Serial.println("Type 'help' for available commands\n");
 }
 

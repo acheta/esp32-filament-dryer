@@ -943,6 +943,177 @@ void test_dryer_completes_when_adjusted_time_reached() {
     TEST_ASSERT_EQUAL(DryerState::FINISHED, dryer->getState());
 }
 
+// ==================== Settings Persistence Integration Tests ====================
+
+void test_dryer_saves_runtime_on_state_change_to_running() {
+    dryer->begin(0);
+    storage->resetCounts();
+
+    dryer->start();
+
+    // Should save runtime state when entering RUNNING
+    TEST_ASSERT_TRUE(storage->getSaveRuntimeStateCallCount() >= 1);
+}
+
+void test_dryer_saves_runtime_on_state_change_to_paused() {
+    dryer->begin(0);
+    dryer->start();
+
+    storage->resetCounts();
+
+    dryer->pause();
+
+    // Should save runtime state when entering PAUSED
+    TEST_ASSERT_TRUE(storage->getSaveRuntimeStateCallCount() >= 1);
+}
+
+void test_dryer_loads_saved_preset_on_startup() {
+    // Configure mock storage to have a saved preset
+    storage->setSelectedPreset(PresetType::PETG);
+    storage->setPIDProfile(PIDProfile::STRONG);
+
+    dryer->begin(0);
+
+    // Should load the saved preset
+    TEST_ASSERT_EQUAL(PresetType::PETG, dryer->getActivePreset());
+    TEST_ASSERT_EQUAL(PIDProfile::STRONG, dryer->getPIDProfile());
+}
+
+void test_dryer_saves_preset_immediately_on_change() {
+    dryer->begin(0);
+    storage->resetCounts();
+
+    dryer->selectPreset(PresetType::PETG);
+
+    // Should save preset immediately
+    TEST_ASSERT_EQUAL(1, storage->getSaveSelectedPresetCallCount());
+}
+
+void test_dryer_saves_pid_immediately_on_change() {
+    dryer->begin(0);
+    storage->resetCounts();
+
+    dryer->setPIDProfile(PIDProfile::STRONG);
+
+    // Should save PID profile immediately
+    TEST_ASSERT_EQUAL(1, storage->getSavePIDProfileCallCount());
+}
+
+// ==================== Power Recovery Tests ====================
+
+void test_dryer_power_recovery_transitions_to_power_recovered_state() {
+    // Simulate saved runtime state
+    storage->setRuntimeState(
+        DryerState::RUNNING,
+        5000,  // 5000 seconds elapsed
+        60.0,  // target temp
+        18000, // target time
+        PresetType::PETG
+    );
+
+    dryer->begin(0);
+
+    // Should transition to POWER_RECOVERED
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryer->getState());
+}
+
+void test_dryer_power_recovery_ensures_heater_and_fan_off() {
+    MockFanControl* mockFan = new MockFanControl();
+    storage->setRuntimeState(DryerState::RUNNING, 5000, 60.0, 18000, PresetType::PETG);
+
+    Dryer* dryerWithFan = new Dryer(sensors, heater, pid, safety, storage, sound, mockFan);
+
+    dryerWithFan->begin(0);
+
+    // Should be in POWER_RECOVERED with heater and fan OFF
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryerWithFan->getState());
+    TEST_ASSERT_FALSE(mockFan->isRunning());
+    TEST_ASSERT_EQUAL(1, heater->getStopCallCount());
+
+    delete dryerWithFan;
+    delete mockFan;
+}
+
+void test_dryer_power_recovery_restores_runtime_values() {
+    storage->setRuntimeState(
+        DryerState::RUNNING,
+        7200,  // 7200 seconds elapsed
+        65.0,  // target temp
+        18000, // target time
+        PresetType::PETG
+    );
+
+    dryer->begin(0);
+
+    // Should restore preset
+    TEST_ASSERT_EQUAL(PresetType::PETG, dryer->getActivePreset());
+
+    CurrentStats stats = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL_FLOAT(65.0, stats.targetTemp);
+    TEST_ASSERT_EQUAL(18000, stats.remainingTime + stats.elapsedTime);  // Total time
+}
+
+void test_dryer_can_continue_from_power_recovered() {
+    storage->setRuntimeState(DryerState::RUNNING, 5000, 60.0, 18000, PresetType::PETG);
+
+    dryer->begin(0);
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryer->getState());
+
+    dryer->start();
+
+    // Should transition to RUNNING
+    TEST_ASSERT_EQUAL(DryerState::RUNNING, dryer->getState());
+}
+
+void test_dryer_can_reset_from_power_recovered() {
+    storage->setRuntimeState(DryerState::RUNNING, 5000, 60.0, 18000, PresetType::PETG);
+
+    dryer->begin(0);
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryer->getState());
+
+    dryer->reset();
+
+    // Should transition to READY
+    TEST_ASSERT_EQUAL(DryerState::READY, dryer->getState());
+    TEST_ASSERT_EQUAL(1, storage->getClearRuntimeStateCallCount());
+}
+
+void test_dryer_normal_startup_when_no_runtime_state() {
+    // No runtime state saved
+    storage->setHasRuntimeState(false);
+
+    dryer->begin(0);
+
+    // Should be in READY (normal startup)
+    TEST_ASSERT_EQUAL(DryerState::READY, dryer->getState());
+}
+
+void test_dryer_loads_saved_settings_on_normal_startup() {
+    // No runtime state, but has saved settings
+    storage->setHasRuntimeState(false);
+    storage->setSelectedPreset(PresetType::PETG);
+    storage->setPIDProfile(PIDProfile::SOFT);
+    storage->setSoundEnabled(false);
+
+    DryingPreset customPreset;
+    customPreset.targetTemp = 55.0;
+    customPreset.targetTime = 9000;
+    customPreset.maxOvershoot = 12.0;
+    storage->setCustomPreset(customPreset);
+
+    dryer->begin(0);
+
+    // Should load all saved settings
+    TEST_ASSERT_EQUAL(PresetType::PETG, dryer->getActivePreset());
+    TEST_ASSERT_EQUAL(PIDProfile::SOFT, dryer->getPIDProfile());
+    TEST_ASSERT_FALSE(dryer->isSoundEnabled());
+
+    DryingPreset loaded = dryer->getCustomPreset();
+    TEST_ASSERT_EQUAL_FLOAT(55.0, loaded.targetTemp);
+    TEST_ASSERT_EQUAL(9000, loaded.targetTime);
+    TEST_ASSERT_EQUAL_FLOAT(12.0, loaded.maxOvershoot);
+}
+
 // ==================== Main Test Runner ====================
 
 int main(int argc, char **argv) {
@@ -1038,6 +1209,22 @@ int main(int argc, char **argv) {
     RUN_TEST(test_dryer_adjust_remaining_time_works_while_ready);
     RUN_TEST(test_dryer_adjust_remaining_time_multiple_adjustments);
     RUN_TEST(test_dryer_completes_when_adjusted_time_reached);
+
+    // Settings persistence integration
+    RUN_TEST(test_dryer_saves_runtime_on_state_change_to_running);
+    RUN_TEST(test_dryer_saves_runtime_on_state_change_to_paused);
+    RUN_TEST(test_dryer_loads_saved_preset_on_startup);
+    RUN_TEST(test_dryer_saves_preset_immediately_on_change);
+    RUN_TEST(test_dryer_saves_pid_immediately_on_change);
+
+    // Power recovery
+    RUN_TEST(test_dryer_power_recovery_transitions_to_power_recovered_state);
+    RUN_TEST(test_dryer_power_recovery_ensures_heater_and_fan_off);
+    RUN_TEST(test_dryer_power_recovery_restores_runtime_values);
+    RUN_TEST(test_dryer_can_continue_from_power_recovered);
+    RUN_TEST(test_dryer_can_reset_from_power_recovered);
+    RUN_TEST(test_dryer_normal_startup_when_no_runtime_state);
+    RUN_TEST(test_dryer_loads_saved_settings_on_normal_startup);
 
     return UNITY_END();
 }
