@@ -127,6 +127,9 @@
     - BOX_TEMP (default): Large box temp with "B:" prefix
     - REMAINING: Large remaining time in h:mm:ss
     - HEATER_TEMP: Large heater temp with "H:" prefix
+    - STATUS_OVERVIEW: State, Elapsed, Fan, Sound (all size 1)
+    - PRESET_CONFIG: Preset, PID, Temp/Overshoot, Target time (all size 1)
+    - SENSOR_READINGS: Box, Heater, PID/PWM_MAX, Humidity (all size 1)
   - **MENU mode**: Shows menu navigation
 - **Display layout**:
   - Line 1.1 (Y=0): State char (R|>|||F|!|P) + Preset abbrev (PLA|PETG|CUST) in top-right
@@ -165,6 +168,7 @@
 - Can be enabled/disabled: `setEnabled(bool)`
 - Triggered via direct calls from UIController, SafetyMonitor, Dryer
 - **Does NOT**: Decide when to play sounds
+- **NOTE**: Interface defined but implementation not yet created (TODO item)
 
 #### **SettingsStorage**
 - Pure persistence layer - no business logic
@@ -609,17 +613,16 @@ HOME screen - showing current state and temps
       - Pause (if RUNNING)
       - Ready (if not READY)
       - Back
-    - Select Preset
-      - PLA (temp, time, overshoot)
-      - PETG (temp, time, overshoot)
-      - ABS (temp, time, overshoot)
-      - Custom (temp, time, overshoot)
+    - Select Preset (selecting immediately applies and exits menu)
+      - PLA (50°C, 5h, 19°C overshoot)
+      - PETG (65°C, 5h, 10°C overshoot)
+      - Custom (user-defined values)
       - Back
-    - Edit Custom preset
+    - Edit Custom preset (edits custom preset values, does NOT select it)
       - Temp (current value) - ±1°C
       - Time (current value) - ±10 min
       - Max Overshoot (current value) - ±1°C
-      - Copy from PLA
+      - Copy from PLA (copies PLA values to custom preset)
       - Back
     - Adjust Timer (current remaining time rounded to 10min)
       - Value edit: ±10 min increments

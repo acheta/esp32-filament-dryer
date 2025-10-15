@@ -33,6 +33,12 @@ pio test -e native -f test_pid_controller
 
 # Run specific test (Linux/Unix container)
 pio test -e native-linux -f test_pid_controller
+
+# Note: The following test suites are planned but not yet implemented:
+# - test_ui_controller
+# - test_menu_controller
+# - test_button_manager
+# - test_sound_controller
 ```
 
 ### Monitoring
@@ -102,7 +108,7 @@ UIController (UI coordinator)
 - `src/control/` - HeaterControl, PIDController, SafetyMonitor, FanControl
 - `src/sensors/` - SensorManager, HeaterTempSensor, BoxTempHumiditySensor
 - `src/userInterface/` - UIController, MenuController, ButtonManager, OLEDDisplay
-- `src/storage/` - SettingsStorage (currently mocked in main.cpp)
+- `src/storage/` - SettingsStorage
 - `test/` - Unit tests and mocks
 
 ## Adding New Components
@@ -140,3 +146,4 @@ Available in runtime via serial monitor:
 - **Board selection**: Edit `Config.h` to uncomment either `ESP32_C3_BOARD` or `ESP32_S3_BOARD`
 - **Watchdog**: Hardware watchdog (10s timeout) auto-resets if loop() hangs
 - **Detailed architecture**: See `specification.MD` for complete design documentation including state machines, callback flows, menu tree, PID algorithms, and safety architecture
+- **TODO items**: See `TODO.md` for list of missing implementations and planned features, particularly SoundController implementation and missing test suites
