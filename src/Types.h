@@ -131,10 +131,16 @@ struct CurrentStats {
     uint32_t remainingTime;
     float pwmOutput;
     PresetType activePreset;
+    bool fanRunning;
+    PIDProfile pidProfile;
+    float maxOvershoot;
+    uint32_t targetTime;
 
     CurrentStats() : state(DryerState::READY), currentTemp(0), targetTemp(0),
                      boxTemp(0), boxHumidity(0), elapsedTime(0),
-                     remainingTime(0), pwmOutput(0), activePreset(PresetType::PLA) {}
+                     remainingTime(0), pwmOutput(0), activePreset(PresetType::PLA),
+                     fanRunning(false), pidProfile(PIDProfile::NORMAL),
+                     maxOvershoot(0), targetTime(0) {}
 };
 
 struct MenuItem {

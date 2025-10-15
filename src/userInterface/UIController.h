@@ -38,11 +38,14 @@ private:
 
     UIMode currentMode;
 
-    // HOME screen stats cycling (removed BOX_HUMIDITY and PID_OUTPUT)
+    // HOME screen stats cycling
     enum class StatsScreen {
-        BOX_TEMP,      // Default: large box temp with "B:" prefix
-        REMAINING,     // Large remaining time in h:mm:ss format
-        HEATER_TEMP    // Large heater temp with "H:" prefix
+        BOX_TEMP,           // Default: large box temp with "B:" prefix
+        REMAINING,          // Large remaining time in h:mm:ss format
+        HEATER_TEMP,        // Large heater temp with "H:" prefix
+        STATUS_OVERVIEW,    // State, Elapsed, Fan, Sound (all size 1)
+        PRESET_CONFIG,      // Preset, PID, Temp/Overshoot, Target time (all size 1)
+        SENSOR_READINGS     // Box, Heater, PID/PWM_MAX, Humidity (all size 1)
     };
 
     StatsScreen currentStatsScreen;
@@ -230,13 +233,13 @@ private:
 
         if (forward) {
             current++;
-            if (current > (int)StatsScreen::HEATER_TEMP) {
+            if (current > (int)StatsScreen::SENSOR_READINGS) {
                 current = 0;
             }
         } else {
             current--;
             if (current < 0) {
-                current = (int)StatsScreen::HEATER_TEMP;
+                current = (int)StatsScreen::SENSOR_READINGS;
             }
         }
 
@@ -294,10 +297,6 @@ private:
                 dryer->setCustomPresetOvershoot(value);
                 break;
 
-            case MenuPath::CUSTOM_SAVE:
-                dryer->saveCustomPreset();
-                if (soundController) soundController->playConfirm();
-                break;
 
             case MenuPath::CUSTOM_COPY_PLA:
                 // Copy PLA preset values to custom
@@ -358,6 +357,15 @@ private:
                 menuController->setSoundEnabled(false);
                 break;
 
+            case MenuPath::BACK:
+                // Check if we're at the root menu
+                if (menuController->getCurrentMenuPath() == MenuPath::ROOT) {
+                    // Exit menu to home screen
+                    exitMenu();
+                }
+                // Otherwise, navigateBack() was already called in MenuController
+                break;
+
             default:
                 break;
         }
@@ -375,6 +383,31 @@ private:
     void renderHomeScreen() {
         display->clear();
 
+        // Handle different screen types
+        switch (currentStatsScreen) {
+            case StatsScreen::BOX_TEMP:
+            case StatsScreen::HEATER_TEMP:
+            case StatsScreen::REMAINING:
+                renderLargValueScreen();
+                break;
+
+            case StatsScreen::STATUS_OVERVIEW:
+                renderStatusOverviewScreen();
+                break;
+
+            case StatsScreen::PRESET_CONFIG:
+                renderPresetConfigScreen();
+                break;
+
+            case StatsScreen::SENSOR_READINGS:
+                renderSensorReadingsScreen();
+                break;
+        }
+
+        display->display();
+    }
+
+    void renderLargValueScreen() {
         // Get state character
         char stateChar = 'R';  // Default READY
         switch (lastStats.state) {
@@ -443,9 +476,12 @@ private:
                     display->print(String(secs));
                 }
                 break;
+
+            default:
+                break;
         }
 
-        // Line 2 (Y=16): Remaining time countdown (left) + Heater temp (right)
+        // Line 2 (Y=16): Remaining time countdown (left) + PWM (right)
         if (lastStats.state == DryerState::RUNNING ||
             lastStats.state == DryerState::PAUSED) {
             display->setTextSize(1);
@@ -458,7 +494,9 @@ private:
             display->print(":");
             if (remainSec < 10) display->print("0");
             display->print(String(remainSec));
-
+            // PWM output on the right
+            display->print(" PW:");
+            display->print(String((int)lastStats.pwmOutput));
             // Heater temp on the right
             display->setCursor(128 - (8 * 6), 16);  // Approx "H:51.2C" = 8 chars
             display->print("H:");
@@ -476,8 +514,119 @@ private:
         display->print("% /");
         display->print(String(lastStats.targetTemp, 0));
         display->print("C");
+    }
 
-        display->display();
+    void renderStatusOverviewScreen() {
+        display->setTextSize(1);
+
+        // Line 0 (Y=0): State
+        display->setCursor(0, 0);
+        display->print("State: ");
+        switch (lastStats.state) {
+            case DryerState::READY: display->print("READY"); break;
+            case DryerState::RUNNING: display->print("RUNNING"); break;
+            case DryerState::PAUSED: display->print("PAUSED"); break;
+            case DryerState::FINISHED: display->print("FINISHED"); break;
+            case DryerState::FAILED: display->print("FAILED"); break;
+            case DryerState::POWER_RECOVERED: display->print("POWER_REC"); break;
+        }
+
+        // Line 1 (Y=8): Elapsed time
+        display->setCursor(0, 8);
+        display->print("Elapsed: ");
+        uint32_t hrs = lastStats.elapsedTime / 3600;
+        uint32_t mins = (lastStats.elapsedTime % 3600) / 60;
+        uint32_t secs = lastStats.elapsedTime % 60;
+        display->print(String(hrs));
+        display->print(":");
+        if (mins < 10) display->print("0");
+        display->print(String(mins));
+        display->print(":");
+        if (secs < 10) display->print("0");
+        display->print(String(secs));
+
+        // Line 2 (Y=16): Fan status
+        display->setCursor(0, 16);
+        display->print("Fan: ");
+        display->print(lastStats.fanRunning ? "ON" : "OFF");
+
+        // Line 3 (Y=24): Sound status
+        display->setCursor(0, 24);
+        display->print("Sound: ");
+        display->print(dryer->isSoundEnabled() ? "ON" : "OFF");
+    }
+
+    void renderPresetConfigScreen() {
+        display->setTextSize(1);
+
+        // Line 0 (Y=0): Preset
+        display->setCursor(0, 0);
+        display->print("Preset: ");
+        switch (lastStats.activePreset) {
+            case PresetType::PLA: display->print("PLA"); break;
+            case PresetType::PETG: display->print("PETG"); break;
+            case PresetType::CUSTOM: display->print("CUSTOM"); break;
+        }
+
+        // Line 1 (Y=8): PID profile
+        display->setCursor(0, 8);
+        display->print("PID: ");
+        switch (lastStats.pidProfile) {
+            case PIDProfile::SOFT: display->print("SOFT"); break;
+            case PIDProfile::NORMAL: display->print("NORMAL"); break;
+            case PIDProfile::STRONG: display->print("STRONG"); break;
+        }
+
+        // Line 2 (Y=16): Temp/Overshoot
+        display->setCursor(0, 16);
+        display->print("Temp/Ovr: ");
+        display->print(String((int)lastStats.targetTemp));
+        display->print("/");
+        display->print(String((int)lastStats.maxOvershoot));
+        display->print("C");
+
+        // Line 3 (Y=24): Target time
+        display->setCursor(0, 24);
+        display->print("Target: ");
+        uint32_t hrs = lastStats.targetTime / 3600;
+        uint32_t mins = (lastStats.targetTime % 3600) / 60;
+        uint32_t secs = lastStats.targetTime % 60;
+        display->print(String(hrs));
+        display->print(":");
+        if (mins < 10) display->print("0");
+        display->print(String(mins));
+        display->print(":");
+        if (secs < 10) display->print("0");
+        display->print(String(secs));
+    }
+
+    void renderSensorReadingsScreen() {
+        display->setTextSize(1);
+
+        // Line 0 (Y=0): Box temp
+        display->setCursor(0, 0);
+        display->print("Box: ");
+        display->print(String(lastStats.boxTemp, 1));
+        display->print("C");
+
+        // Line 1 (Y=8): Heater temp
+        display->setCursor(0, 8);
+        display->print("Heater: ");
+        display->print(String(lastStats.currentTemp, 1));
+        display->print("C");
+
+        // Line 2 (Y=16): PID output
+        display->setCursor(0, 16);
+        display->print("PID: ");
+        display->print(String((int)lastStats.pwmOutput));
+        display->print("/");
+        display->print(String(PWM_MAX));
+
+        // Line 3 (Y=24): Humidity
+        display->setCursor(0, 24);
+        display->print("Humidity: ");
+        display->print(String(lastStats.boxHumidity, 0));
+        display->print("%");
     }
 
     void renderMenuScreen() {

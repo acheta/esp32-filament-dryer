@@ -167,13 +167,15 @@
 - **Does NOT**: Decide when to play sounds
 
 #### **SettingsStorage**
+- Pure persistence layer - no business logic
 - LittleFS file operations
 - JSON serialization/deserialization (ArduinoJson)
 - Two files (paths defined in Config.h):
   - Settings file - user preferences, custom preset, sound on/off
   - Runtime file - current run state for power loss recovery
 - Methods: `saveSettings()`, `loadSettings()`, `saveRuntimeState()`, `loadRuntimeState()`, `clearRuntimeState()`, `saveCustomPreset()`, `loadCustomPreset()`
-- **Does NOT**: Validate settings, make policy decisions
+- Loads ANY state from file - does not filter or validate
+- **Does NOT**: Validate settings, make policy decisions, decide which states are recoverable (Dryer does this)
 
 ### 4. Data Flow Patterns
 
@@ -261,11 +263,15 @@ SensorManager detects overheat or SafetyMonitor timeout
 - **POWER_RECOVERED**: Recovered from power loss, awaiting user action
 
 #### State Persistence
-- Save to LittleFS at interval defined by `STATE_SAVE_INTERVAL` during RUNNING
+- Save to LittleFS at interval defined by `STATE_SAVE_INTERVAL` during RUNNING and when entering PAUSED
 - Include: state, elapsed time, target temp/time, active preset, timestamp
-- On boot: check for valid runtime state
-- If found and recent RUNNING state after power on: transition to POWER_RECOVERED
-- User must explicitly continue or reset
+- On boot:
+  1. SettingsStorage loads whatever state was saved from file
+  2. Dryer checks if state is recoverable (RUNNING or PAUSED)
+  3. If recoverable: transition to POWER_RECOVERED with preserved timing
+  4. If not recoverable: normal startup to READY
+- User must explicitly continue (via `start()`) or reset
+- **Separation of Concerns**: Storage is a dumb persistence layer; Dryer contains business logic for recovery validation
 
 ### 6. Timing Specifications
 

@@ -269,7 +269,8 @@ private:
 
     /**
      * Load runtime state from JSON file
-     * No timestamp checking - just verify state was RUNNING
+     * Loads whatever state is stored - no business logic filtering
+     * Dryer layer decides which states are valid for recovery
      */
     bool loadRuntimeInternal() {
         if (!LittleFS.exists(RUNTIME_FILE)) {
@@ -300,14 +301,21 @@ private:
             return false;
         }
 
-        // Only consider runtime valid if state was RUNNING
+        // Load state string and convert to enum
+        // No filtering - load whatever was saved
         String stateStr = doc["state"] | "READY";
-        if (stateStr != "RUNNING") {
-            hasValidRuntime = false;
-            return false;
+        if (stateStr == "RUNNING") {
+            runtimeState = DryerState::RUNNING;
+        } else if (stateStr == "PAUSED") {
+            runtimeState = DryerState::PAUSED;
+        } else if (stateStr == "FINISHED") {
+            runtimeState = DryerState::FINISHED;
+        } else if (stateStr == "FAILED") {
+            runtimeState = DryerState::FAILED;
+        } else {
+            runtimeState = DryerState::READY;
         }
 
-        runtimeState = DryerState::RUNNING;
         runtimeElapsed = doc["elapsed"] | 0;
         runtimeTargetTemp = doc["targetTemp"] | 50.0;
         runtimeTargetTime = doc["targetTime"] | 14400;
@@ -326,7 +334,9 @@ private:
         Serial.println(runtimeTimestamp);
 
         hasValidRuntime = true;
-        Serial.println("  ✓ Valid runtime state found (RUNNING)");
+        Serial.print("  ✓ Runtime state loaded (");
+        Serial.print(stateStr);
+        Serial.println(")");
 #else
         hasValidRuntime = true;
 #endif
@@ -536,7 +546,7 @@ public:
         runtimeTimestamp = timestamp;
 
         // Mark as valid in memory (cached)
-        // Note: On restart, only RUNNING state will be loaded from file
+        // Note: On restart, the state will be loaded and validated by Dryer
         hasValidRuntime = true;
 
         // Save to file (don't fail if write fails - graceful degradation)

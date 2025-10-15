@@ -91,12 +91,13 @@ private:
             case DryerState::RUNNING:
                 heaterControl->start(currentMillis);
                 if (fanControl) fanControl->start();
-                if (prevState == DryerState::READY || prevState == DryerState::POWER_RECOVERED) {
+                if (prevState == DryerState::READY) {
                     // Fresh start
                     startTime = currentMillis;
                     totalPausedDuration = 0;
-                } else if (prevState == DryerState::PAUSED) {
-                    // Resuming from pause
+                } else if (prevState == DryerState::PAUSED || prevState == DryerState::POWER_RECOVERED) {
+                    // Resuming from pause or power recovery
+                    // In both cases, timing is already set up to preserve elapsed time
                     totalPausedDuration += (currentMillis - pausedTime);
                 }
 
@@ -266,11 +267,19 @@ private:
         }
     }
 
+    /**
+     * Determine if a saved state is recoverable after power loss
+     * Business logic: Only RUNNING and PAUSED states should trigger recovery
+     */
+    bool isRecoverableState(DryerState state) const {
+        return (state == DryerState::RUNNING || state == DryerState::PAUSED);
+    }
+
     /** Calculate elapsed time in seconds */
     uint32_t getElapsedTime(uint32_t currentMillis) const {
         if (currentState == DryerState::RUNNING) {
             return ((currentMillis - startTime) - totalPausedDuration)/1000;
-        } else if (currentState == DryerState::PAUSED) {
+        } else if (currentState == DryerState::PAUSED || currentState == DryerState::POWER_RECOVERED) {
             return ((pausedTime - startTime) - totalPausedDuration)/1000;
         }
         return 0;
@@ -288,6 +297,10 @@ private:
                               (targetTimeSeconds - stats.elapsedTime) : 0;
         stats.pwmOutput = currentPWM;
         stats.activePreset = activePreset;
+        stats.fanRunning = (fanControl && fanControl->isRunning());
+        stats.pidProfile = pidProfile;
+        stats.maxOvershoot = maxAllowedTemp - targetTemp;
+        stats.targetTime = targetTimeSeconds;
         return stats;
     }
 
@@ -350,17 +363,51 @@ public:
             // Load runtime state from storage
             DryerState savedState = storage->getRuntimeState();
 
-            // Only recover if state was RUNNING
-            if (savedState == DryerState::RUNNING) {
+            // Business logic: only recover from RUNNING or PAUSED states
+            if (isRecoverableState(savedState)) {
+                // Load custom preset FIRST (for CUSTOM preset values)
+                customPreset = storage->loadCustomPreset();
+
+                // Load general settings (PID profile and sound)
+                pidProfile = storage->loadPIDProfile();
+                pidController->setProfile(pidProfile);
+
+                soundEnabled = storage->loadSoundEnabled();
+                if (soundController) {
+                    soundController->setEnabled(soundEnabled);
+                }
+
                 // Restore runtime values
                 PresetType savedPreset = storage->getRuntimePreset();
                 uint32_t savedElapsed = storage->getRuntimeElapsed();
                 float savedTargetTemp = storage->getRuntimeTargetTemp();
                 uint32_t savedTargetTime = storage->getRuntimeTargetTime();
 
-                // Restore preset (this also loads temp/time/overshoot)
+                // Set active preset
                 activePreset = savedPreset;
-                loadPreset(savedPreset);
+
+                // Use saved targetTemp and targetTimeSeconds directly
+                // DO NOT call loadPreset() as it would overwrite adjusted time
+                targetTemp = savedTargetTemp;
+                targetTimeSeconds = savedTargetTime;
+
+                // Load overshoot from preset for safety limits
+                switch (savedPreset) {
+                    case PresetType::PLA:
+                        maxAllowedTemp = targetTemp + PRESET_PLA_OVERSHOOT;
+                        break;
+                    case PresetType::PETG:
+                        maxAllowedTemp = targetTemp + PRESET_PETG_OVERSHOOT;
+                        break;
+                    case PresetType::CUSTOM:
+                        maxAllowedTemp = targetTemp + customPreset.maxOvershoot;
+                        break;
+                }
+
+                // Update component constraints
+                pidController->setMaxAllowedTemp(maxAllowedTemp);
+                safetyMonitor->setMaxBoxTemp(MAX_BOX_TEMP);
+                safetyMonitor->setMaxHeaterTemp(maxAllowedTemp);
 
                 // Restore timing (simulated as if we paused at elapsed time)
                 startTime = 0;
@@ -370,7 +417,7 @@ public:
                 // Transition to POWER_RECOVERED (ensures heater and fan are OFF)
                 transitionToState(DryerState::POWER_RECOVERED, currentMillis);
             } else {
-                // State wasn't RUNNING, do normal startup
+                // State wasn't RUNNING or PAUSED, do normal startup
                 loadSavedSettings();
             }
         } else {
@@ -380,7 +427,10 @@ public:
     }
 
     void loadSavedSettings() {
-        // Load saved preset
+        // Load custom preset FIRST (before loadPreset is called)
+        customPreset = storage->loadCustomPreset();
+
+        // Load saved preset and apply it (will use custom preset if CUSTOM is selected)
         PresetType savedPreset = storage->loadSelectedPreset();
         activePreset = savedPreset;
         loadPreset(savedPreset);
@@ -395,9 +445,6 @@ public:
         if (soundController) {
             soundController->setEnabled(soundEnabled);
         }
-
-        // Load custom preset
-        customPreset = storage->loadCustomPreset();
     }
 
     void update(uint32_t currentMillis) override {
@@ -497,17 +544,43 @@ public:
 
     void setCustomPresetTemp(float temp) override {
         customPreset.targetTemp = constrain(temp, MIN_TEMP, MAX_BOX_TEMP);
+
+        // If CUSTOM preset is currently active, apply changes immediately
+        if (activePreset == PresetType::CUSTOM) {
+            loadPreset(PresetType::CUSTOM);
+        }
+
+        // Auto-save custom preset
+        storage->saveCustomPreset(customPreset);
     }
 
     void setCustomPresetTime(uint32_t seconds) override {
         customPreset.targetTime = constrain(seconds, MIN_TIME_SECONDS, MAX_TIME_SECONDS);
+
+        // If CUSTOM preset is currently active, apply changes immediately
+        if (activePreset == PresetType::CUSTOM) {
+            loadPreset(PresetType::CUSTOM);
+        }
+
+        // Auto-save custom preset
+        storage->saveCustomPreset(customPreset);
     }
 
     void setCustomPresetOvershoot(float overshoot) override {
         customPreset.maxOvershoot = constrain(overshoot, 0.0f, DEFAULT_MAX_OVERSHOOT);
+
+        // If CUSTOM preset is currently active, apply changes immediately
+        if (activePreset == PresetType::CUSTOM) {
+            loadPreset(PresetType::CUSTOM);
+        }
+
+        // Auto-save custom preset
+        storage->saveCustomPreset(customPreset);
     }
 
     void saveCustomPreset() override {
+        // Deprecated: Auto-save now happens in setCustomPreset* methods
+        // Kept for interface compatibility
         storage->saveCustomPreset(customPreset);
     }
 

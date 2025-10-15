@@ -245,7 +245,8 @@ void handleSerialCommand(String cmd) {
         // PWM output
         Serial.print("PWM Output: ");
         Serial.print((int)stats.pwmOutput);
-        Serial.println(" / 255");
+        Serial.print(" / ");
+        Serial.println(PWM_MAX);
 
         // Fan status
         Serial.print("Fan: ");

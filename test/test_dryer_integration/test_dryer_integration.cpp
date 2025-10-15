@@ -1079,6 +1079,35 @@ void test_dryer_can_reset_from_power_recovered() {
     TEST_ASSERT_EQUAL(1, storage->getClearRuntimeStateCallCount());
 }
 
+void test_dryer_power_recovery_from_paused_state() {
+    // Simulate saved runtime state from PAUSED
+    storage->setRuntimeState(
+        DryerState::PAUSED,
+        5000,  // 5000 seconds elapsed
+        60.0,  // target temp
+        18000, // target time
+        PresetType::PETG
+    );
+
+    dryer->begin(0);
+
+    // Should transition to POWER_RECOVERED
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryer->getState());
+}
+
+void test_dryer_can_continue_from_power_recovered_paused() {
+    storage->setRuntimeState(DryerState::PAUSED, 5000, 60.0, 18000, PresetType::PETG);
+
+    dryer->begin(0);
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryer->getState());
+
+    // User should be able to use start() to continue
+    dryer->start();
+
+    // Should transition to RUNNING
+    TEST_ASSERT_EQUAL(DryerState::RUNNING, dryer->getState());
+}
+
 void test_dryer_normal_startup_when_no_runtime_state() {
     // No runtime state saved
     storage->setHasRuntimeState(false);
@@ -1113,6 +1142,96 @@ void test_dryer_loads_saved_settings_on_normal_startup() {
     TEST_ASSERT_EQUAL_FLOAT(55.0, loaded.targetTemp);
     TEST_ASSERT_EQUAL(9000, loaded.targetTime);
     TEST_ASSERT_EQUAL_FLOAT(12.0, loaded.maxOvershoot);
+}
+
+void test_dryer_power_recovery_loads_pid_profile() {
+    // Set runtime state to RUNNING with PETG preset
+    storage->setRuntimeState(
+        DryerState::RUNNING,
+        5000,  // 5000 seconds elapsed
+        65.0,  // target temp
+        18000, // target time
+        PresetType::PETG
+    );
+
+    // Set PID profile to SOFT (non-default)
+    storage->setPIDProfile(PIDProfile::SOFT);
+
+    dryer->begin(0);
+
+    // Should be in POWER_RECOVERED state
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryer->getState());
+
+    // Should load SOFT PID profile (not default NORMAL)
+    TEST_ASSERT_EQUAL(PIDProfile::SOFT, dryer->getPIDProfile());
+    TEST_ASSERT_EQUAL(PIDProfile::SOFT, pid->getProfile());
+}
+
+void test_dryer_power_recovery_loads_sound_setting() {
+    // Set runtime state to RUNNING with PLA preset
+    storage->setRuntimeState(
+        DryerState::RUNNING,
+        3000,  // 3000 seconds elapsed
+        50.0,  // target temp
+        18000, // target time
+        PresetType::PLA
+    );
+
+    // Set sound to disabled (non-default)
+    storage->setSoundEnabled(false);
+
+    dryer->begin(0);
+
+    // Should be in POWER_RECOVERED state
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryer->getState());
+
+    // Should load disabled sound setting (not default enabled)
+    TEST_ASSERT_FALSE(dryer->isSoundEnabled());
+    TEST_ASSERT_FALSE(sound->isEnabled());
+}
+
+void test_dryer_power_recovery_loads_all_settings() {
+    // Set runtime state to PAUSED
+    storage->setRuntimeState(
+        DryerState::PAUSED,
+        7200,  // 7200 seconds elapsed
+        60.0,  // target temp
+        14400, // target time
+        PresetType::CUSTOM
+    );
+
+    // Set PID profile to STRONG
+    storage->setPIDProfile(PIDProfile::STRONG);
+
+    // Set sound to disabled
+    storage->setSoundEnabled(false);
+
+    // Set custom preset with specific values
+    DryingPreset customPreset;
+    customPreset.targetTemp = 55.0;
+    customPreset.targetTime = 14400;
+    customPreset.maxOvershoot = 8.0;
+    storage->setCustomPreset(customPreset);
+
+    dryer->begin(0);
+
+    // Should be in POWER_RECOVERED state
+    TEST_ASSERT_EQUAL(DryerState::POWER_RECOVERED, dryer->getState());
+
+    // Verify all settings are correctly loaded
+    TEST_ASSERT_EQUAL(PIDProfile::STRONG, dryer->getPIDProfile());
+    TEST_ASSERT_FALSE(dryer->isSoundEnabled());
+    TEST_ASSERT_EQUAL(PresetType::CUSTOM, dryer->getActivePreset());
+
+    DryingPreset loaded = dryer->getCustomPreset();
+    TEST_ASSERT_EQUAL_FLOAT(55.0, loaded.targetTemp);
+    TEST_ASSERT_EQUAL(14400, loaded.targetTime);
+    TEST_ASSERT_EQUAL_FLOAT(8.0, loaded.maxOvershoot);
+
+    // Verify runtime values are also correct
+    CurrentStats stats = dryer->getCurrentStats();
+    TEST_ASSERT_EQUAL_FLOAT(60.0, stats.targetTemp);  // From runtime state
+    TEST_ASSERT_EQUAL(14400, stats.remainingTime + stats.elapsedTime);  // Total time
 }
 
 // ==================== Main Test Runner ====================
@@ -1224,8 +1343,13 @@ int main(int argc, char **argv) {
     RUN_TEST(test_dryer_power_recovery_restores_runtime_values);
     RUN_TEST(test_dryer_can_continue_from_power_recovered);
     RUN_TEST(test_dryer_can_reset_from_power_recovered);
+    RUN_TEST(test_dryer_power_recovery_from_paused_state);
+    RUN_TEST(test_dryer_can_continue_from_power_recovered_paused);
     RUN_TEST(test_dryer_normal_startup_when_no_runtime_state);
     RUN_TEST(test_dryer_loads_saved_settings_on_normal_startup);
+    RUN_TEST(test_dryer_power_recovery_loads_pid_profile);
+    RUN_TEST(test_dryer_power_recovery_loads_sound_setting);
+    RUN_TEST(test_dryer_power_recovery_loads_all_settings);
 
     return UNITY_END();
 }

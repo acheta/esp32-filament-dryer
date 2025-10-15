@@ -161,7 +161,7 @@ private:
         notifyCallbacks(path, 0);
 
         // Some actions require navigation changes
-        if (path == MenuPath::CUSTOM_SAVE || path == MenuPath::BACK) {
+        if (path == MenuPath::BACK) {
             navigateBack();
         }
     }
@@ -270,6 +270,12 @@ private:
         sysInfo.path = MenuPath::SYSTEM_INFO;
         sysInfo.submenuPath = MenuPath::SYSTEM_INFO;
         items.push_back(sysInfo);
+
+        MenuItem back;
+        back.label = "Back";
+        back.type = MenuItemType::ACTION;
+        back.path = MenuPath::BACK;
+        items.push_back(back);
 
         return items;
     }
