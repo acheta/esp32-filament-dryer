@@ -90,7 +90,17 @@ UIController (UI coordinator)
 
 **HeaterControl Software PWM**: Must call `update(currentMillis)` frequently (< 100ms) in main loop. Uses software timing with period from `HEATER_PWM_PERIOD_MS` because hardware LEDC can't achieve long periods needed for SSR relay longevity.
 
-**PID Output Limiting**: Output capped to `PWM_MAX_PID_OUTPUT` (not `PWM_MAX`) to prevent overshoot. Temperature-aware slowdown scales output when approaching max temp. See specification.MD lines 54-79 for anti-windup and predictive cooling details.
+**PID Control Strategy**: PID controls **box temperature** (primary control variable), not heater temperature. The heater is the actuator. Critical points:
+- `compute(setpoint, boxTemp, heaterTemp, currentMillis)` signature - requires BOTH temperatures
+- **Two-phase heater limiting** prevents box temperature overshoot:
+  - **Aggressive phase**: Box >5°C from target → heater allowed up to `maxAllowedTemp` (e.g., 60°C)
+  - **Conservative phase**: Box ≤5°C from target → heater limit reduces proportionally
+  - **At target**: Heater limited to `setpoint + MAX_BOX_TEMP_OVERSHOOT` (e.g., 52°C for 50°C target)
+- Config constants: `BOX_TEMP_APPROACH_MARGIN` (5°C), `MAX_BOX_TEMP_OVERSHOOT` (2°C)
+- PID error calculated from box temperature: `error = setpoint - boxTemp`
+- Additional temperature-aware slowdown when heater approaches its dynamic limit
+
+**PID Output Limiting**: Output capped to `PWM_MAX_PID_OUTPUT` (not `PWM_MAX`) to prevent overshoot. Temperature-aware slowdown scales output when approaching max temp. See specification.MD lines 54-84 for anti-windup, predictive cooling, and two-phase heater limiting details.
 
 **State Persistence**: Dryer saves runtime state every `STATE_SAVE_INTERVAL` to enable power loss recovery (POWER_RECOVERED state).
 

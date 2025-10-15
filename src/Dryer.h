@@ -188,8 +188,9 @@ private:
         currentHeaterTemp = temp;
 
         // If running, update PID and heater
+        // PID controls box temperature (setpoint) while constraining heater temperature
         if (currentState == DryerState::RUNNING) {
-            float output = pidController->compute(targetTemp, temp, timestamp);
+            float output = pidController->compute(targetTemp, currentBoxTemp, currentHeaterTemp, timestamp);
             currentPWM = output;
             heaterControl->setPWM((uint8_t)output);
         }

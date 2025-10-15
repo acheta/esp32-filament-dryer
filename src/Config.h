@@ -158,6 +158,10 @@ constexpr PIDTuning PID_STRONG = {4.5, 0.6, 4.0};  // Still careful
 constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.8;  // Low-pass filter coefficient
 constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;    // Start scaling within margin of max
 
+// Box temperature control parameters
+constexpr float BOX_TEMP_APPROACH_MARGIN = 5.0;    // °C - Start conservative heating when box is this close to target
+constexpr float MAX_BOX_TEMP_OVERSHOOT = 2.0;      // °C - Maximum allowed box temperature overshoot above target
+
 // ==================== Preset Configurations ====================
 
 #ifdef UNIT_TEST

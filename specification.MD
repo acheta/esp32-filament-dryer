@@ -52,9 +52,12 @@
 - **Does NOT**: Process or interpret readings, enforce limits
 
 #### **PIDController**
-- **Stateful** - maintains integral accumulation and last input for derivative
-- Subscribes to heater temp updates via callback
-- Computes PWM output: `compute(setpoint, input, currentMillis)`
+- **Stateful** - maintains integral accumulation and last box temperature for derivative
+- **Controls BOX temperature, not heater temperature** - this is the primary control variable
+- Computes PWM output: `compute(setpoint, boxTemp, heaterTemp, currentMillis)`
+  - `setpoint`: Target box temperature (e.g., 50°C)
+  - `boxTemp`: Current box temperature (primary control variable)
+  - `heaterTemp`: Current heater temperature (used for dynamic limiting)
 - **Three profiles**: `setProfile(PIDProfile::SOFT | NORMAL | STRONG)` - tuning constants defined in Config.h
 - **Output limits**: Capped to `PWM_MAX_PID_OUTPUT` from Config.h (primary power safety limit)
 - **Anti-windup protection**:
@@ -64,19 +67,21 @@
 - **Derivative smoothing** (low-pass filter):
   - Use exponential moving average on derivative term to reduce noise sensitivity
   - Filter coefficient defined as `PID_DERIVATIVE_FILTER_ALPHA` in Config.h
-- **Temperature-aware slowdown**:
-  - When approaching max allowed temp (within margin defined by `PID_TEMP_SLOWDOWN_MARGIN`), scale down entire PID output
-  - This is the PRIMARY mechanism for preventing overshoot
-  - Emergency stop if at or above max temp
-- **Predictive cooling compensation** (NEW):
+  - Derivative calculated on box temperature measurement (not error) to avoid setpoint kick
+- **Two-phase heater limiting** (PRIMARY overshoot prevention):
+  - **Aggressive phase**: Box far from target (>BOX_TEMP_APPROACH_MARGIN) → heater allowed up to `maxAllowedTemp`
+  - **Conservative phase**: Box near target (≤BOX_TEMP_APPROACH_MARGIN) → heater limit reduces proportionally
+  - At target: heater limit = `setpoint + MAX_BOX_TEMP_OVERSHOOT` (e.g., 52°C for 50°C target)
+  - Within slowdown margin of heater limit: scale output proportionally
+  - Emergency stop if heater at or above dynamic limit
+- **Predictive cooling compensation**:
   - Tracks cooling rate (°C/s) with exponential moving average
   - When cooling faster than `MIN_COOLING_RATE`, predicts future temperature
   - Enhances error term to prevent undershoot during cooldown
   - Uses `PREDICTIVE_HORIZON_SEC` and `PREDICTIVE_GAIN` constants
-- Derivative on measurement (not error) to avoid setpoint kick
 - `reset()` method to clear state when starting/stopping
 - Debug methods: `getCoolingRate()`, `getOutputMax()`
-- **Does NOT**: Read sensors, control heater directly, but DOES enforce temperature slowdown and predictive compensation
+- **Does NOT**: Read sensors, control heater directly
 
 #### **HeaterControl**
 - Controls heater via **software PWM** (not hardware LEDC)

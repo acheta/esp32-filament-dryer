@@ -180,11 +180,14 @@ void test_dryer_updates_pid_on_heater_temp() {
 
     pid->resetCounts();
 
+    // Set box temperature first
+    sensors->triggerBoxDataUpdate(45.0, 40.0, 500);
+
     // Trigger heater temp update
     sensors->triggerHeaterTempUpdate(60.0, 500);
 
     TEST_ASSERT_EQUAL(1, pid->getComputeCallCount());
-    TEST_ASSERT_EQUAL_FLOAT(60.0, pid->getLastInput());
+    TEST_ASSERT_EQUAL_FLOAT(60.0, pid->getLastHeaterTemp());
 }
 
 void test_dryer_sets_heater_pwm_from_pid_output() {

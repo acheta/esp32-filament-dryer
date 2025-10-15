@@ -16,7 +16,8 @@ private:
     uint32_t resetCallCount;
 
     float lastSetpoint;
-    float lastInput;
+    float lastBoxTemp;
+    float lastHeaterTemp;
     uint32_t lastTime;
 
 public:
@@ -30,7 +31,8 @@ public:
           computeCallCount(0),
           resetCallCount(0),
           lastSetpoint(0),
-          lastInput(0),
+          lastBoxTemp(0),
+          lastHeaterTemp(0),
           lastTime(0) {
     }
 
@@ -52,10 +54,11 @@ public:
         this->maxTemp = maxTemp;
     }
 
-    float compute(float setpoint, float input, uint32_t currentMillis) override {
+    float compute(float setpoint, float boxTemp, float heaterTemp, uint32_t currentMillis) override {
         computeCallCount++;
         lastSetpoint = setpoint;
-        lastInput = input;
+        lastBoxTemp = boxTemp;
+        lastHeaterTemp = heaterTemp;
         lastTime = currentMillis;
 
         // Return fixed output or simple proportional for testing
@@ -81,7 +84,8 @@ public:
     uint32_t getComputeCallCount() const { return computeCallCount; }
     uint32_t getResetCallCount() const { return resetCallCount; }
     float getLastSetpoint() const { return lastSetpoint; }
-    float getLastInput() const { return lastInput; }
+    float getLastBoxTemp() const { return lastBoxTemp; }
+    float getLastHeaterTemp() const { return lastHeaterTemp; }
     uint32_t getLastTime() const { return lastTime; }
 
     void resetCounts() {

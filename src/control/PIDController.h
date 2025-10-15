@@ -5,20 +5,22 @@
 #include "../Config.h"
 
 /**
- * PIDController - PID algorithm with anti-windup and temperature-aware slowdown
+ * PIDController - PID algorithm with box temperature control and heater limiting
  *
  * Features:
  * - Three tuning profiles (SOFT, NORMAL, STRONG)
  * - Anti-windup protection
  * - Derivative smoothing via low-pass filter
- * - Temperature-aware slowdown (prevents overshoot by scaling output near max temp)
  * - Predictive cooling compensation (prevents undershoot during cooldown)
  * - Derivative on measurement (not error) to avoid setpoint kick
  * - Output limited to PWM_MAX_PID_OUTPUT to prevent overpowering
+ * - Two-phase heater limiting based on box temperature proximity to target:
+ *   * Aggressive phase: Box far from target → Allow heater up to maxAllowedTemp
+ *   * Conservative phase: Box near target → Reduce heater limit to prevent overshoot
  *
- * IMPORTANT: maxAllowedTemp should be set to (setpoint + maxOvershoot)
- *            Example: For 50°C setpoint with 10°C overshoot → maxAllowedTemp = 60°C
- *            The slowdown will start at 55°C (60 - 5°C margin)
+ * IMPORTANT: PID controls BOX temperature, not heater temperature
+ *            maxAllowedTemp is the maximum heater temperature (e.g., targetBox + overshoot)
+ *            Example: For 50°C box target with 10°C overshoot → maxAllowedTemp = 60°C
  */
 class PIDController : public IPIDController {
 private:
@@ -99,10 +101,10 @@ public:
         maxAllowedTemp = maxTemp;
     }
 
-    float compute(float setpoint, float input, uint32_t currentMillis) override {
+    float compute(float setpoint, float boxTemp, float heaterTemp, uint32_t currentMillis) override {
         // First run initialization
         if (firstRun) {
-            lastInput = input;
+            lastInput = boxTemp;
             lastTime = currentMillis;
             firstRun = false;
             return 0.0;
@@ -115,15 +117,15 @@ public:
         }
         float dtSec = dt / 1000.0;
 
-        // Calculate current temperature rate of change
-        float rawCoolingRate = (input - lastInput) / dtSec;  // °C/s (negative when cooling)
+        // Calculate current box temperature rate of change
+        float rawCoolingRate = (boxTemp - lastInput) / dtSec;  // °C/s (negative when cooling)
 
         // Apply exponential moving average to cooling rate
         coolingRate = COOLING_RATE_FILTER_ALPHA * rawCoolingRate
                     + (1.0 - COOLING_RATE_FILTER_ALPHA) * coolingRate;
 
-        // Calculate error
-        float error = setpoint - input;
+        // Calculate error based on BOX temperature (primary control variable)
+        float error = setpoint - boxTemp;
 
         // Predictive compensation for cooling
         // If we're cooling down (negative rate) and above setpoint,
@@ -132,7 +134,7 @@ public:
 
         if (coolingRate < MIN_COOLING_RATE) {  // Cooling faster than threshold
             // Predict future temperature
-            float predictedTemp = input + (coolingRate * PREDICTIVE_HORIZON_SEC);
+            float predictedTemp = boxTemp + (coolingRate * PREDICTIVE_HORIZON_SEC);
             predictedError = setpoint - predictedTemp;
 
             // If prediction shows we'll undershoot, increase error now
@@ -173,7 +175,7 @@ public:
         integral = constrain(integral, outMin, outMax); // Clamp to output range
 
         // Derivative term with low-pass filter (on measurement, not error)
-        float dInput = (input - lastInput) / dtSec;
+        float dInput = (boxTemp - lastInput) / dtSec;
         float rawDerivative = -kd * dInput; // Negative to oppose change
 
         // Apply exponential moving average filter
@@ -186,25 +188,70 @@ public:
         float output = pTerm + integral + dTerm;
         output = constrain(output, outMin, outMax);
 
-        // Temperature-aware slowdown (PRIMARY overshoot prevention)
-        // This uses ACTUAL maxAllowedTemp (e.g., 60°C for 50°C setpoint + 10°C overshoot)
-        float tempMargin = maxAllowedTemp - input;
+        // ==================== Two-Phase Heater Limiting ====================
+        // Phase 1: Box far from target → Allow heater up to maxAllowedTemp (aggressive)
+        // Phase 2: Box near target → Reduce heater limit to prevent box overshoot (conservative)
 
-        if (input >= maxAllowedTemp) {
-            // Emergency: at or above max temp, stop completely
+        float boxError = setpoint - boxTemp;  // Positive when box is below target
+
+        // Calculate dynamic heater limit based on box temperature proximity
+        float dynamicHeaterLimit = maxAllowedTemp;
+
+        if (boxError <= BOX_TEMP_APPROACH_MARGIN && boxError > 0) {
+            // Box is approaching target - transition to conservative mode
+            // Reduce heater limit proportionally as box gets closer
+            // When box is within BOX_TEMP_APPROACH_MARGIN of target, start scaling down heater limit
+
+            float approachRatio = boxError / BOX_TEMP_APPROACH_MARGIN; // 1.0 (far) to 0.0 (at target)
+
+            // At target: heater limit = setpoint + MAX_BOX_TEMP_OVERSHOOT
+            // Far from target: heater limit = maxAllowedTemp (full overshoot)
+            float minHeaterLimit = setpoint + MAX_BOX_TEMP_OVERSHOOT;
+            dynamicHeaterLimit = minHeaterLimit + (maxAllowedTemp - minHeaterLimit) * approachRatio;
+
+            #ifdef DEBUG_PID
+            Serial.print("CONSERVATIVE MODE: BoxError=");
+            Serial.print(boxError, 2);
+            Serial.print("°C | ApproachRatio=");
+            Serial.print(approachRatio, 2);
+            Serial.print(" | HeaterLimit=");
+            Serial.println(dynamicHeaterLimit, 1);
+            #endif
+        } else if (boxError <= 0) {
+            // Box is at or above target - minimum heater limit
+            dynamicHeaterLimit = setpoint + MAX_BOX_TEMP_OVERSHOOT;
+
+            #ifdef DEBUG_PID
+            Serial.print("BOX AT TARGET: HeaterLimit=");
+            Serial.println(dynamicHeaterLimit, 1);
+            #endif
+        }
+
+        // Apply heater temperature limiting based on dynamic limit
+        float heaterMargin = dynamicHeaterLimit - heaterTemp;
+
+        if (heaterTemp >= dynamicHeaterLimit) {
+            // Heater at or above dynamic limit - stop heating
             output = 0.0;
             integral = 0.0; // Clear integral to prevent windup
-        } else if (tempMargin < TEMP_SLOWDOWN_MARGIN && tempMargin > 0) {
-            // Approaching max temp: scale output proportionally
-            float scaleFactor = tempMargin / TEMP_SLOWDOWN_MARGIN; // 0-1 range
+
+            #ifdef DEBUG_PID
+            Serial.print("HEATER LIMIT REACHED: Heater=");
+            Serial.print(heaterTemp, 1);
+            Serial.print("°C | Limit=");
+            Serial.println(dynamicHeaterLimit, 1);
+            #endif
+        } else if (heaterMargin < TEMP_SLOWDOWN_MARGIN && heaterMargin > 0) {
+            // Approaching heater limit: scale output proportionally
+            float scaleFactor = heaterMargin / TEMP_SLOWDOWN_MARGIN; // 0-1 range
             output *= scaleFactor;
 
             // Also scale down integral to prevent windup when limiting
             integral *= scaleFactor;
 
             #ifdef DEBUG_PID
-            Serial.print("SLOWDOWN: Margin=");
-            Serial.print(tempMargin, 2);
+            Serial.print("HEATER SLOWDOWN: Margin=");
+            Serial.print(heaterMargin, 2);
             Serial.print("°C | Scale=");
             Serial.print(scaleFactor, 2);
             Serial.print(" | Output reduced to ");
@@ -212,15 +259,17 @@ public:
             #endif
         }
 
-        // Update state
-        lastInput = input;
+        // Update state (store box temp for derivative calculation)
+        lastInput = boxTemp;
         lastTime = currentMillis;
 
         #ifdef DEBUG_PID
-        Serial.print("PID: SP=");
+        Serial.print("PID: BoxSP=");
         Serial.print(setpoint, 1);
-        Serial.print(" | IN=");
-        Serial.print(input, 1);
+        Serial.print(" | BoxTemp=");
+        Serial.print(boxTemp, 1);
+        Serial.print(" | HeaterTemp=");
+        Serial.print(heaterTemp, 1);
         Serial.print(" | ERR=");
         Serial.print(error, 2);
         Serial.print(" | P=");
