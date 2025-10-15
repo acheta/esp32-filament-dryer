@@ -29,12 +29,24 @@ public:
     String(const char* str) : data(str ? str : "") {}
     String(const std::string& str) : data(str) {}
     String(int val) : data(std::to_string(val)) {}
+    String(unsigned int val) : data(std::to_string(val)) {}
+    String(long val) : data(std::to_string(val)) {}
+    String(unsigned long val) : data(std::to_string(val)) {}
     String(float val) : data(std::to_string(val)) {}
+    String(float val, int precision) {
+        char buffer[32];
+        snprintf(buffer, sizeof(buffer), "%.*f", precision, val);
+        data = buffer;
+    }
     const char* c_str() const { return data.c_str(); }
     size_t length() const { return data.length(); }
     bool operator==(const String& other) const { return data == other.data; }
     bool operator!=(const String& other) const { return data != other.data; }
     String operator+(const String& other) const { return String(data + other.data); }
+    String operator+(const char* other) const { return String(data + std::string(other ? other : "")); }
+    friend String operator+(const char* lhs, const String& rhs) {
+        return String(std::string(lhs ? lhs : "") + rhs.data);
+    }
     int indexOf(const String& str) const {
         size_t pos = data.find(str.data);
         return (pos != std::string::npos) ? static_cast<int>(pos) : -1;

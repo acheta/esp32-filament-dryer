@@ -21,37 +21,34 @@
 
 ### MEDIUM PRIORITY
 
-#### 2. UIController Tests
-- **Status**: No test file exists
-- **Location**: Should be in `test/test_ui_controller/test_ui_controller.cpp`
-- **Coverage needed**:
-  - Button callback handling
-  - Menu mode switching
-  - Stats screen cycling
-  - Display update dirty flag logic
-  - Menu timeout behavior
-  - Cached value change detection
+#### 2. UIController Tests ✅ COMPLETED
+- **Status**: ✅ Implemented and passing
+- **Location**: `test/test_ui_controller/test_ui_controller.cpp`
+- **Tests**: 49 tests covering:
+  - ✅ Initialization and component registration
+  - ✅ Button callback handling (SET/UP/DOWN in HOME and MENU modes)
+  - ✅ Menu mode switching and navigation
+  - ✅ Stats screen cycling (6 screens)
+  - ✅ Display update dirty flag logic
+  - ✅ Menu timeout behavior (30 seconds)
+  - ✅ Cached value change detection
+  - ✅ Menu selection routing to Dryer methods
+  - ✅ Sound integration
+  - ✅ Complete integration flows
 
-#### 3. MenuController Tests
-- **Status**: No test file exists
-- **Location**: Should be in `test/test_menu_controller/test_menu_controller.cpp`
-- **Coverage needed**:
-  - Menu navigation (UP/DOWN/ENTER/BACK)
-  - Edit mode entry and exit
-  - Value editing with constraints
-  - Menu history navigation
-  - Timer adjustment logic
-  - Custom preset editing
-
-#### 4. ButtonManager Tests
-- **Status**: No test file exists
-- **Location**: Should be in `test/test_button_manager/test_button_manager.cpp`
-- **Coverage needed**:
-  - Single click detection
-  - Long press detection
-  - Debouncing
-  - Multiple button handling
-  - Callback firing
+#### 3. MenuController Tests ✅ COMPLETED
+- **Status**: ✅ Implemented and passing
+- **Location**: `test/test_menu_controller/test_menu_controller.cpp`
+- **Tests**: 37 tests covering:
+  - ✅ Menu navigation (UP/DOWN/ENTER/BACK)
+  - ✅ Edit mode entry and exit
+  - ✅ Value editing with constraints
+  - ✅ Menu history navigation
+  - ✅ Timer adjustment logic
+  - ✅ Custom preset editing
+  - ✅ All menu paths accessible
+  - ✅ Callback system
+  - ✅ Edge cases and integration flows
 
 ### LOW PRIORITY
 
@@ -147,11 +144,11 @@
 - ✅ test_heater_control
 - ✅ test_fan_control
 - ✅ test_settings_storage
+- ✅ test_button_manager (18 tests)
+- ✅ test_menu_controller (37 tests)
+- ✅ test_ui_controller (49 tests)
 
 ### Missing Test Coverage
-- ❌ test_ui_controller
-- ❌ test_menu_controller
-- ❌ test_button_manager
 - ❌ test_sound_controller (once implemented)
 - ❌ test_box_temp_humidity_sensor
 - ❌ test_heater_temp_sensor

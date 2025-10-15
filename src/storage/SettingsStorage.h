@@ -619,6 +619,10 @@ public:
     PresetType getRuntimePreset() const override { return runtimePreset; }
 };
 
+// Define static const members outside the class for ODR compliance
+constexpr uint8_t SettingsStorage::SETTINGS_VERSION;
+constexpr uint8_t SettingsStorage::RUNTIME_VERSION;
+
 #endif
 
 
