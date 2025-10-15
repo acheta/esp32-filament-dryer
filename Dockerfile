@@ -1,15 +1,18 @@
 # Dockerfile
-FROM node:22-alpine
+# Use Debian-based Node image instead of Alpine for ESP32 toolchain compatibility
+# Alpine uses musl libc while ESP32 toolchains are compiled for glibc
+FROM node:22-slim
 
 # Install build tools and PlatformIO dependencies
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y \
     bash \
-    g++ \
-    make \
-    python3 \
-    py3-pip \
+    build-essential \
     git \
-    udev
+    python3 \
+    python3-pip \
+    python3-venv \
+    udev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install PlatformIO
 RUN pip3 install --break-system-packages platformio

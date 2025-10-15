@@ -9,4 +9,9 @@ services:
     volumes:
       - .:/workspace        # mount your project folder
       - /workspace/node_modules  # ensure node_modules belongs to project, not to image
+      - platformio_cache:/root/.platformio  # cache PlatformIO packages (including ESP32 toolchains)
     tty: true
+
+# Named volume to persist PlatformIO packages across container rebuilds
+volumes:
+  platformio_cache:
