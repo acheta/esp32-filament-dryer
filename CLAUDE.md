@@ -96,7 +96,11 @@ UIController (UI coordinator)
   - **Aggressive phase**: Box >5°C from target → heater allowed up to `maxAllowedTemp` (e.g., 60°C)
   - **Conservative phase**: Box ≤5°C from target → heater limit reduces proportionally
   - **At target**: Heater limited to `setpoint + MAX_BOX_TEMP_OVERSHOOT` (e.g., 52°C for 50°C target)
-- Config constants: `BOX_TEMP_APPROACH_MARGIN` (5°C), `MAX_BOX_TEMP_OVERSHOOT` (2°C)
+- **Minimum heater temperature control** ensures steady-state stability:
+  - When box at target, heater maintained at or above `setpoint - MIN_HEATER_TEMP_MARGIN`
+  - Prevents heater from cooling below box target temperature
+  - Eliminates temperature oscillations at steady state
+- Config constants: `BOX_TEMP_APPROACH_MARGIN` (5°C), `MAX_BOX_TEMP_OVERSHOOT` (2°C), `MIN_HEATER_TEMP_MARGIN` (0.5°C)
 - PID error calculated from box temperature: `error = setpoint - boxTemp`
 - Additional temperature-aware slowdown when heater approaches its dynamic limit
 

@@ -74,6 +74,11 @@
   - At target: heater limit = `setpoint + MAX_BOX_TEMP_OVERSHOOT` (e.g., 52°C for 50°C target)
   - Within slowdown margin of heater limit: scale output proportionally
   - Emergency stop if heater at or above dynamic limit
+- **Minimum heater temperature control** (steady-state stability):
+  - When box at or very close to target (≤0.5°C), ensures heater doesn't drop below `setpoint - MIN_HEATER_TEMP_MARGIN`
+  - Provides minimum output boost if heater drops too low
+  - Prevents oscillations and maintains stable steady-state temperature
+  - Only active when box is at target to avoid interfering with heating phase
 - **Predictive cooling compensation**:
   - Tracks cooling rate (°C/s) with exponential moving average
   - When cooling faster than `MIN_COOLING_RATE`, predicts future temperature

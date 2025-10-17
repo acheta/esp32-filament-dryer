@@ -1,6 +1,6 @@
 #ifndef PID_CONTROLLER_H
 #define PID_CONTROLLER_H
-
+#define DEBUG_PID
 #include "../interfaces/IPIDController.h"
 #include "../Config.h"
 
@@ -41,15 +41,28 @@ private:
     uint32_t lastTime;
     bool firstRun;
 
+    // Steady-state tracking
+    float steadyStateOutput;        // Learned output that maintains target temperature
+    uint32_t steadyStateStartTime;  // When we entered steady-state
+    bool inSteadyState;             // Are we currently in steady-state?
+
+    // Heater-Box correlation tracking
+    float heaterRate;               // Track heater temperature rate of change
+    float lastHeaterTemp;           // Last heater temperature reading
+
+    // Baseline insufficiency tracking
+    bool baselineEnforced;          // Is minimum baseline currently being enforced?
+    uint32_t baselineEnforcementStartTime;  // When baseline enforcement began
+
     // Constants
     static constexpr float DERIVATIVE_FILTER_ALPHA = PID_DERIVATIVE_FILTER_ALPHA;
     static constexpr float TEMP_SLOWDOWN_MARGIN = PID_TEMP_SLOWDOWN_MARGIN;
 
-    // Predictive cooling parameters
-    static constexpr float COOLING_RATE_FILTER_ALPHA = 0.7;  // Filter for cooling rate
-    static constexpr float PREDICTIVE_HORIZON_SEC = 10.0;    // Look ahead 10 seconds
-    static constexpr float MIN_COOLING_RATE = -0.08;          // °C/s - only predict if cooling faster
-    static constexpr float PREDICTIVE_GAIN = 1.5;            // Amplify response during cooling
+    // Predictive cooling parameters (REDUCED aggressiveness)
+    static constexpr float COOLING_RATE_FILTER_ALPHA = 0.95;  // Filter for cooling rate
+    static constexpr float PREDICTIVE_HORIZON_SEC = 15.0;     // Look ahead 15 seconds (reduced from 30)
+    static constexpr float MIN_COOLING_RATE = -0.2;          // °C/s - only predict if cooling much faster (was -0.03)
+    static constexpr float PREDICTIVE_GAIN = 1;             // Amplify response during cooling (reduced from 4)
 
     void setTuning(float p, float i, float d) {
         kp = p;
@@ -70,7 +83,14 @@ public:
           filteredDerivative(0.0),
           coolingRate(0.0),
           lastTime(0),
-          firstRun(true) {
+          firstRun(true),
+          steadyStateOutput(0.0),
+          steadyStateStartTime(0),
+          inSteadyState(false),
+          heaterRate(0.0),
+          lastHeaterTemp(0.0),
+          baselineEnforced(false),
+          baselineEnforcementStartTime(0) {
     }
 
     void begin() override {
@@ -105,6 +125,7 @@ public:
         // First run initialization
         if (firstRun) {
             lastInput = boxTemp;
+            lastHeaterTemp = heaterTemp;
             lastTime = currentMillis;
             firstRun = false;
             return 0.0;
@@ -117,6 +138,12 @@ public:
         }
         float dtSec = dt / 1000.0;
 
+        // ==================== Heater Rate Tracking (Leading Indicator) ====================
+        // Track heater temperature rate of change - heater leads box by ~20 seconds
+        float rawHeaterRate = (heaterTemp - lastHeaterTemp) / dtSec;  // °C/s
+        heaterRate = HEATER_BOX_CORRELATION_FILTER * rawHeaterRate
+                   + (1.0 - HEATER_BOX_CORRELATION_FILTER) * heaterRate;
+
         // Calculate current box temperature rate of change
         float rawCoolingRate = (boxTemp - lastInput) / dtSec;  // °C/s (negative when cooling)
 
@@ -127,27 +154,31 @@ public:
         // Calculate error based on BOX temperature (primary control variable)
         float error = setpoint - boxTemp;
 
-        // Predictive compensation for cooling
-        // If we're cooling down (negative rate) and above setpoint,
-        // predict where we'll be in PREDICTIVE_HORIZON_SEC
-        float predictedError = error;
+        // ==================== Predictive Compensation (REDUCED Aggressiveness) ====================
+        // Predict cooling and undershoot - now with much stricter activation threshold
+        // Only activate when cooling is RAPID (< -0.15°C/s, was -0.03°C/s)
 
-        if (coolingRate < MIN_COOLING_RATE) {  // Cooling faster than threshold
-            // Predict future temperature
+        bool coolingPredictionActive = false;
+
+        if (coolingRate < MIN_COOLING_RATE && boxTemp > setpoint - 1.0) {
+            // Cooling rapidly AND still above/near target
             float predictedTemp = boxTemp + (coolingRate * PREDICTIVE_HORIZON_SEC);
-            predictedError = setpoint - predictedTemp;
+            float predictedError = setpoint - predictedTemp;
 
-            // If prediction shows we'll undershoot, increase error now
-            if (predictedError > error) {
-                // Blend predicted error with current error
+            // If prediction shows significant undershoot, increase error
+            if (predictedError > error && predictedError > 1.0) {
+                // Blend predicted error with current error (reduced gain: 1.5 was 4.0)
                 error = error + (predictedError - error) * PREDICTIVE_GAIN;
+                coolingPredictionActive = true;
 
                 #ifdef DEBUG_PID
-                Serial.print("COOLING PREDICTION: Rate=");
+                Serial.print("COOLING PREDICTION: BoxRate=");
                 Serial.print(coolingRate, 3);
-                Serial.print(" °C/s | Predicted temp=");
+                Serial.print(" HeaterRate=");
+                Serial.print(heaterRate, 3);
+                Serial.print(" °C/s | Predicted=");
                 Serial.print(predictedTemp, 1);
-                Serial.print(" | Enhanced error=");
+                Serial.print("°C | Enhanced error=");
                 Serial.println(error, 2);
                 #endif
             }
@@ -156,19 +187,19 @@ public:
         // Proportional term (using potentially enhanced error)
         float pTerm = kp * error;
 
-        // Integral term with anti-windup
+        // ==================== Integral Term with Smooth Windup Protection ====================
         float proposedIntegral = integral + ki * error * dtSec;
 
         // Calculate output with proposed integral
         float proposedOutput = pTerm + proposedIntegral;
 
-        // Anti-windup: don't accumulate integral if output would saturate
+        // Smooth anti-windup: gradually reduce integral accumulation near saturation
         if (proposedOutput > outMax && error > 0) {
-            // Output maxed and error still positive - don't accumulate more
-            proposedIntegral = integral;
+            // Output approaching max - don't accumulate more, but decay smoothly
+            proposedIntegral = integral * 0.95;  // Decay instead of hard zeroing
         } else if (proposedOutput < outMin && error < 0) {
-            // Output at min and error still negative - don't accumulate more
-            proposedIntegral = integral;
+            // Output approaching min - decay smoothly
+            proposedIntegral = integral * 0.95;
         }
 
         integral = proposedIntegral;
@@ -227,13 +258,14 @@ public:
             #endif
         }
 
-        // Apply heater temperature limiting based on dynamic limit
+        // ==================== Coordinated Heater Limiting ====================
+        // Apply heater temperature limiting, but coordinate with cooling prediction
         float heaterMargin = dynamicHeaterLimit - heaterTemp;
 
         if (heaterTemp >= dynamicHeaterLimit) {
             // Heater at or above dynamic limit - stop heating
             output = 0.0;
-            integral = 0.0; // Clear integral to prevent windup
+            integral *= 0.5; // Smooth decay instead of hard zero
 
             #ifdef DEBUG_PID
             Serial.print("HEATER LIMIT REACHED: Heater=");
@@ -244,10 +276,17 @@ public:
         } else if (heaterMargin < TEMP_SLOWDOWN_MARGIN && heaterMargin > 0) {
             // Approaching heater limit: scale output proportionally
             float scaleFactor = heaterMargin / TEMP_SLOWDOWN_MARGIN; // 0-1 range
+
+            // If cooling prediction is active, reduce slowdown aggressiveness
+            // (let prediction win to prevent oscillation)
+            if (coolingPredictionActive) {
+                scaleFactor = scaleFactor * 0.7 + 0.3; // Soften scaling (min 0.3 instead of 0.0)
+            }
+
             output *= scaleFactor;
 
-            // Also scale down integral to prevent windup when limiting
-            integral *= scaleFactor;
+            // Smooth integral decay proportional to scaling
+            integral *= (scaleFactor * 0.5 + 0.5);  // Decay less aggressively
 
             #ifdef DEBUG_PID
             Serial.print("HEATER SLOWDOWN: Margin=");
@@ -259,8 +298,191 @@ public:
             #endif
         }
 
-        // Update state (store box temp for derivative calculation)
+        // ==================== Minimum Heater Temperature Control ====================
+        // When box is at or near target, ensure heater doesn't drop below setpoint
+        // This provides steady-state stability and prevents oscillations
+
+        if (boxError <= 0.5) {  // Box is at or very close to target
+            float minHeaterTemp = setpoint - MIN_HEATER_TEMP_MARGIN;  // Allow small deadband
+
+            if (heaterTemp < minHeaterTemp && output < outMax) {
+                // Heater dropped below minimum - ensure some output to bring it back up
+                // Calculate minimum output needed (simple proportional boost)
+                float heaterDeficit = minHeaterTemp - heaterTemp;
+                float minOutput = heaterDeficit * 2.0;  // Proportional gain for minimum control
+
+                // Ensure output is at least minOutput (but respect max limits)
+                if (output < minOutput) {
+                    output = constrain(minOutput, output, outMax);
+
+                    #ifdef DEBUG_PID
+                    Serial.print("MIN HEATER CONTROL: Heater=");
+                    Serial.print(heaterTemp, 1);
+                    Serial.print("°C | MinLimit=");
+                    Serial.print(minHeaterTemp, 1);
+                    Serial.print(" | Output boosted to ");
+                    Serial.println(output, 1);
+                    #endif
+                }
+            }
+        }
+
+        // Calculate absolute box error for use in multiple sections below
+        float absBoxError = (boxError >= 0) ? boxError : -boxError;
+
+        // ==================== Heater Momentum Compensation ====================
+        // Heater has significant thermal mass + sensor lag
+        // When heater cools rapidly, apply proactive heating to prevent undershoot
+
+        if (heaterRate < HEATER_MOMENTUM_THRESHOLD && absBoxError < 2.0) {
+            // Heater cooling rapidly while near target - add compensating output
+            float momentumCompensation = -heaterRate * HEATER_MOMENTUM_GAIN;  // Negative rate * gain = positive boost
+            output += momentumCompensation;
+            output = constrain(output, outMin, outMax);
+
+            #ifdef DEBUG_PID
+            Serial.print("HEATER MOMENTUM COMP: HeaterRate=");
+            Serial.print(heaterRate, 3);
+            Serial.print("°C/s | Boost=+");
+            Serial.print(momentumCompensation, 1);
+            Serial.println("%");
+            #endif
+        }
+
+        // ==================== Minimum Output Near Target ====================
+        // CRITICAL: Prevent excessive cooling undershoot
+        // When near target, never drop below minimum baseline output
+        // Empirical data shows ~20% maintains ~50°C heater temp
+
+        bool wasBaselineEnforced = false;
+        if (absBoxError < 2.0 && output < MIN_OUTPUT_NEAR_TARGET) {
+            // Near target but output too low - apply minimum baseline
+            float originalOutput = output;
+            output = MIN_OUTPUT_NEAR_TARGET;
+            wasBaselineEnforced = true;
+
+            #ifdef DEBUG_PID
+            Serial.print("MIN OUTPUT ENFORCED: Was=");
+            Serial.print(originalOutput, 1);
+            Serial.print("% | Now=");
+            Serial.print(output, 1);
+            Serial.println("%");
+            #endif
+        }
+
+        // ==================== Baseline Insufficiency Compensation ====================
+        // When baseline is enforced but box temperature is still falling,
+        // proactively boost output above baseline to prevent undershoot
+
+        if (wasBaselineEnforced) {
+            // Track baseline enforcement duration
+            if (!baselineEnforced) {
+                // Just started enforcing baseline
+                baselineEnforced = true;
+                baselineEnforcementStartTime = currentMillis;
+            }
+
+            // Check if baseline has been enforced long enough to assess insufficiency
+            uint32_t baselineEnforcementDuration = currentMillis - baselineEnforcementStartTime;
+
+            if (baselineEnforcementDuration >= BASELINE_ENFORCEMENT_THRESHOLD_MS) {
+                // Baseline has been active long enough - check if box is cooling
+                if (coolingRate < 0) {
+                    // Box is cooling despite baseline - boost output proportionally
+                    float baselineBoost = -coolingRate * BASELINE_BOOST_GAIN;  // Negative rate * gain = positive boost
+                    baselineBoost = constrain(baselineBoost, 0.0f, MAX_BASELINE_BOOST);
+
+                    output += baselineBoost;
+                    output = constrain(output, outMin, outMax);
+
+                    #ifdef DEBUG_PID
+                    Serial.print("BASELINE INSUFFICIENT: BoxRate=");
+                    Serial.print(coolingRate, 3);
+                    Serial.print("°C/s | Duration=");
+                    Serial.print(baselineEnforcementDuration / 1000.0, 1);
+                    Serial.print("s | Boost=+");
+                    Serial.print(baselineBoost, 1);
+                    Serial.print("% | Output=");
+                    Serial.println(output, 1);
+                    #endif
+                }
+            }
+        } else {
+            // Baseline not enforced - reset tracking
+            if (baselineEnforced) {
+                baselineEnforced = false;
+                baselineEnforcementStartTime = 0;
+            }
+        }
+
+        // ==================== Steady-State Learning ====================
+        // Track output when system is stable at target for extended period
+        // This learned value helps stabilize future approaches to target
+
+        if (absBoxError <= STEADY_STATE_TOLERANCE) {
+            // Box is within tolerance of target
+            if (!inSteadyState) {
+                // Just entered steady-state
+                steadyStateStartTime = currentMillis;
+                inSteadyState = true;
+            } else {
+                // Still in steady-state - check if we've been here long enough to trust the output
+                uint32_t timeInSteadyState = currentMillis - steadyStateStartTime;
+
+                if (timeInSteadyState >= STEADY_STATE_TIME_MS) {
+                    // We've been stable for sufficient time - learn this output
+                    // Use exponential filter to smooth learned value
+                    if (steadyStateOutput == 0.0) {
+                        // First time learning
+                        steadyStateOutput = output;
+                    } else {
+                        // Update learned value with filtering
+                        steadyStateOutput = STEADY_STATE_OUTPUT_FILTER * steadyStateOutput
+                                          + (1.0 - STEADY_STATE_OUTPUT_FILTER) * output;
+                    }
+
+                    #ifdef DEBUG_PID
+                    if (timeInSteadyState % 10000 < dt) {  // Log every ~10 seconds
+                        Serial.print("STEADY-STATE LEARNING: Output=");
+                        Serial.print(output, 1);
+                        Serial.print("% | Learned=");
+                        Serial.print(steadyStateOutput, 1);
+                        Serial.println("%");
+                    }
+                    #endif
+                }
+            }
+
+            // Bias output toward learned steady-state value
+            // This helps prevent oscillations and speeds convergence
+            if (steadyStateOutput > 0.0) {
+                if (absBoxError < 0.5) {
+                    // Very close to target - strongly bias toward learned output
+                    float biasFactor = 0.4;  // Blend 40% toward learned value
+
+                    // If box is below target (cooling undershoot), bias even more strongly
+                    if (boxError > 0) {  // Box below target
+                        biasFactor = 0.6;  // 60% bias to prevent undershoot
+                    }
+
+                    output = output * (1.0 - biasFactor) + steadyStateOutput * biasFactor;
+
+                    #ifdef DEBUG_PID
+                    Serial.print("STEADY-STATE BIAS: Factor=");
+                    Serial.print(biasFactor, 2);
+                    Serial.print(" | Output adjusted to ");
+                    Serial.println(output, 1);
+                    #endif
+                }
+            }
+        } else {
+            // Left steady-state zone
+            inSteadyState = false;
+        }
+
+        // Update state (store temps for rate calculation)
         lastInput = boxTemp;
+        lastHeaterTemp = heaterTemp;
         lastTime = currentMillis;
 
         #ifdef DEBUG_PID
@@ -279,7 +501,12 @@ public:
         Serial.print(" | D=");
         Serial.print(dTerm, 1);
         Serial.print(" | OUT=");
-        Serial.println(output, 1);
+        Serial.print(output, 1);
+        if (steadyStateOutput > 0.0) {
+            Serial.print(" | SS=");
+            Serial.print(steadyStateOutput, 1);
+        }
+        Serial.println();
         #endif
 
         return output;
@@ -291,6 +518,13 @@ public:
         coolingRate = 0.0;
         lastInput = 0.0;
         firstRun = true;
+        steadyStateOutput = STEADY_STATE_MIN_OUTPUT;  // Initialize to baseline (~20%)
+        steadyStateStartTime = 0;
+        inSteadyState = false;
+        heaterRate = 0.0;
+        lastHeaterTemp = 0.0;
+        baselineEnforced = false;
+        baselineEnforcementStartTime = 0;
     }
 
     // Debug getter

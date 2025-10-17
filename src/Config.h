@@ -132,7 +132,7 @@ constexpr uint32_t POWER_RECOVERY_TIMEOUT = 300000; // 5 minutes
 
 // ==================== PWM Configuration ====================
 
-constexpr uint32_t HEATER_PWM_PERIOD_MS = 2000;   // 5 second period
+constexpr uint32_t HEATER_PWM_PERIOD_MS = 2000;   // 2 second period
 constexpr float HEATER_PWM_FREQ = 1000.0 / HEATER_PWM_PERIOD_MS;  // 0.2 Hz (for reference only)
 
 constexpr uint8_t PWM_MIN = 0;
@@ -155,12 +155,34 @@ constexpr PIDTuning PID_NORMAL = {2.0, 0.3, 3.0};  // Moderate
 constexpr PIDTuning PID_STRONG = {4.5, 0.6, 4.0};  // Still careful
 
 // PID control parameters
-constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.8;  // Low-pass filter coefficient
+constexpr float PID_DERIVATIVE_FILTER_ALPHA = 0.9;  // Low-pass filter coefficient
 constexpr float PID_TEMP_SLOWDOWN_MARGIN = 5.0;    // Start scaling within margin of max
 
 // Box temperature control parameters
-constexpr float BOX_TEMP_APPROACH_MARGIN = 5.0;    // °C - Start conservative heating when box is this close to target
+constexpr float BOX_TEMP_APPROACH_MARGIN = 3.0;    // °C - Start conservative heating when box is this close to target
 constexpr float MAX_BOX_TEMP_OVERSHOOT = 2.0;      // °C - Maximum allowed box temperature overshoot above target
+constexpr float MIN_HEATER_TEMP_MARGIN = 0.5;      // °C - Deadband for minimum heater temperature control at steady state
+
+// Steady-state control parameters
+constexpr float STEADY_STATE_TOLERANCE = 0.5;      // °C - Box error tolerance for steady-state detection
+constexpr uint32_t STEADY_STATE_TIME_MS = 10000;   // Time at target before considering steady-state
+constexpr float STEADY_STATE_OUTPUT_FILTER = 0.8; // Exponential filter for steady-state output tracking
+constexpr float STEADY_STATE_OUTPUT_BAND = 3.0;    // ±% around steady-state output to maintain
+constexpr float STEADY_STATE_MIN_OUTPUT = 20.0;    // % - Minimum output to maintain when near target (baseline)
+
+// Heater-Box correlation parameters
+constexpr float HEATER_BOX_LEAD_TIME_SEC = 20.0;   // Heater leads box by ~20 seconds
+constexpr float HEATER_BOX_CORRELATION_FILTER = 0.9; // Filter for correlation tracking
+
+// Heater momentum compensation (heater has significant thermal mass + sensor lag)
+constexpr float HEATER_MOMENTUM_THRESHOLD = -0.1;  // °C/s - When heater cools this fast, apply compensation
+constexpr float HEATER_MOMENTUM_GAIN = 10.0;       // Boost output by this much per °C/s of heater cooling
+constexpr float MIN_OUTPUT_NEAR_TARGET = 19.0;     // % - Never drop below this when within 2°C of target
+
+// Baseline insufficiency compensation (when baseline output is insufficient to maintain target)
+constexpr uint32_t BASELINE_ENFORCEMENT_THRESHOLD_MS = 5000;  // Wait 5 seconds before detecting insufficiency
+constexpr float BASELINE_BOOST_GAIN = 15.0;        // Boost output by this much per °C/s of box cooling
+constexpr float MAX_BASELINE_BOOST = 10.0;         // % - Maximum additional boost above baseline
 
 // ==================== Preset Configurations ====================
 
@@ -193,7 +215,7 @@ constexpr float MAX_BOX_TEMP_OVERSHOOT = 2.0;      // °C - Maximum allowed box 
     // PLA preset
     constexpr float PRESET_PLA_TEMP = 51.0;
     constexpr uint32_t PRESET_PLA_TIME = 5*60*60; // 5 hours
-    constexpr float PRESET_PLA_OVERSHOOT = 19.0;
+    constexpr float PRESET_PLA_OVERSHOOT = 10.0;
 
     // PETG preset
     constexpr float PRESET_PETG_TEMP = 65.0;
